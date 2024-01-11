@@ -4,8 +4,8 @@ set -e
 set -u
 set -o pipefail
 
-stage=2
-stop_stage=2
+stage=3
+stop_stage=3
 model="damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch"
 
 #for subset in test_aishell test_net test_meeting test_conv test_libriclean test_giga test_talcs test_htrs462 test_sjtcs test_yl test_yg; do
@@ -102,10 +102,31 @@ if [ $stage -le 2 ] && [ $stop_stage -ge 2 ];then
         ${output_dir}/1best_recog/wer.txt
     awk '/utt:/ { utt=$2 } /WER:/ { print utt, $2 }' \
         ${output_dir}/1best_recog/wer.txt > \
-        ${data_dir}/utt2wer \
+        ${data_dir}/utt2wer
 
 fi
 
+if [ $stage -le 3 ] && [ $stop_stage -ge 3 ];then
+    echo "Filter utt whose WER <= 5% ..."
+    filter_dir=${data_dir}/acc95
+    mkdir -p ${filter_dir}
+    cat ${data_dir}/utt2wer | awk '{if($2<=5) print $0}' > ${filter_dir}/utt2wer
+    # use the recognized text as text pseudo label. 避免Whisper的正则文本和实际发音不一致。
+    if [ ! -f ${data_dir}/text_whiper ] ;then
+      mv ${data_dir}/text ${data_dir}/text_whiper
+    fi
+    python3 ./utils/remove_space_between_chinese.py ${output_dir}/1best_recog/text ${data_dir}/text 1
+    for file_name in wav.scp text; do
+      utils/filter_scp.pl  ${filter_dir}/utt2wer ${data_dir}/$file_name > ${filter_dir}/$file_name
+    done
+    if [ -f ${data_dir}/wav2dur ]; then
+      utils/filter_scp.pl  ${filter_dir}/utt2wer ${data_dir}/wav2dur > ${filter_dir}/wav2dur
+      dur_ori=`cat ${data_dir}/wav2dur | awk -v total=0.0 '{total+=$2 } END{print total/3600}'`
+      dur=`cat ${filter_dir}/wav2dur | awk -v total=0.0 '{total+=$2 } END{print total/3600}'`
+      echo "Total duration $dur_ori hours, WER<=5% duration $dur hours."
+    fi
+
+fi
 
 #if [ $stage -le 3 ] && [ $stop_stage -ge 3 ];then
 #    echo "Computing WER ..."
