@@ -355,6 +355,17 @@ def inference_paraformer(
             writer = None
 
         for keys, batch in loader:
+            # filter the too short audio, and too long audio
+            too_short_wavs = batch['speech_lengths'] < fs['model_fs'] * 0.1
+            too_long_wavs = batch['speech_lengths'] > fs['model_fs'] * 30
+            for i in range(len(keys)):
+                if bool(too_short_wavs[i]) or bool(too_long_wavs[i]):
+                    logging.info(f"filter the utt {keys[i]} out, the length {batch['speech_lengths'][i]}")
+            keys = [keys[i] for i in range(len(keys)) if
+                    (not bool(too_short_wavs[i])) and (not bool(too_long_wavs[i]))]
+            for k in batch.keys():
+                batch[k] = batch[k][(~too_short_wavs) * (~too_long_wavs)]
+
             assert isinstance(batch, dict), type(batch)
             assert all(isinstance(s, str) for s in keys), keys
             _bs = len(next(iter(batch.values())))

@@ -10,7 +10,7 @@ model="damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch"
 
 batch_size=64
 gpu_inference=true    # whether to perform gpu decoding
-gpuid_list="2,3"    # set gpus, e.g., gpuid_list="0,1"
+gpuid_list="0,1"    # set gpus, e.g., gpuid_list="0,1"
 njob=32    # the number of jobs for CPU decoding, if gpu_inference=false, use CPU decoding, please set njob
 checkpoint_dir="checkpoint"
 checkpoint_name="40epoch.pb"  #"valid.acc.ave_10best.pb"
@@ -22,9 +22,11 @@ if [ -n "${checkpoint_dir}" ]; then
   model=${checkpoint_dir}/${model}
 fi
 
-for subset in test_aishell test_net test_meeting test_conv test_libriclean test_giga test_talcs test_htrs462 test_sjtcs test_yl test_yg test_ylfar ; do
-data_dir="./data/test/$subset"
-output_dir="./results_ft${checkpoint_name}/$subset"
+#for subset in test_aishell test_net test_meeting test_conv test_libriclean test_giga test_talcs test_htrs462 test_sjtcs test_yl test_yg test_ylfar ; do
+for subset in ManEngMix; do
+
+data_dir="/data/megastore/Datasets/ASR/ASR_Labels/$subset"
+output_dir="/data/megastore/Datasets/ASR/ASR_Labels/$subset/result"
 
 if ${gpu_inference} == "true"; then
     nj=$(echo $gpuid_list | awk -F "," '{print NF}')

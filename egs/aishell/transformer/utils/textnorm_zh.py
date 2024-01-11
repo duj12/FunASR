@@ -9,6 +9,8 @@
 #   - python 3.X
 # notes: python 2.X WILL fail or produce misleading results
 
+from tn.chinese.normalizer import Normalizer
+normalizer = Normalizer()
 import sys, os, argparse, codecs, string, re
 
 # ================================================================================ #
@@ -810,7 +812,9 @@ if __name__ == '__main__':
             text = remove_erhua(text, ER_WHITELIST)
 
         # NSW(Non-Standard-Word) normalization
-        text = NSWNormalizer(text).normalize()
+        # text = NSWNormalizer(text).normalize()
+        # use wetextprocessing
+        text = normalizer.normalize(text)
 
         # Punctuations removal
         old_chars = CHINESE_PUNC_LIST + string.punctuation # includes all CN and EN punctuations

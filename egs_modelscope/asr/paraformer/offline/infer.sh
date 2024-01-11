@@ -4,16 +4,18 @@ set -e
 set -u
 set -o pipefail
 
-stage=1
+stage=2
 stop_stage=2
 model="damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch"
 
-for subset in test_aishell test_net test_meeting test_conv test_libriclean test_giga test_talcs test_htrs462 test_sjtcs test_yl test_yg; do
-data_dir="./data/test/$subset"
-output_dir="./results/$subset"
-batch_size=64
+#for subset in test_aishell test_net test_meeting test_conv test_libriclean test_giga test_talcs test_htrs462 test_sjtcs test_yl test_yg; do
+for subset in data_mp4; do
+
+data_dir="$subset"
+output_dir="$subset/result"
+batch_size=32
 gpu_inference=true    # whether to perform gpu decoding
-gpuid_list="4,5"    # set gpus, e.g., gpuid_list="0,1"
+gpuid_list="0,1,2,3,4,5,6,7"    # set gpus, e.g., gpuid_list="0,1"
 njob=32    # the number of jobs for CPU decoding, if gpu_inference=false, use CPU decoding, please set njob
 checkpoint_dir=
 checkpoint_name="valid.acc.ave.pb"
@@ -72,35 +74,46 @@ if [ $stage -le 1 ] && [ $stop_stage -ge 1 ];then
 fi
 
 if [ $stage -le 2 ] && [ $stop_stage -ge 2 ];then
-    echo "Computing WER ..."
-    cp ${output_dir}/1best_recog/text ${output_dir}/1best_recog/text.proc
-    cp ${data_dir}/text ${output_dir}/1best_recog/text.ref
-    python utils/compute_wer.py ${output_dir}/1best_recog/text.ref ${output_dir}/1best_recog/text.proc ${output_dir}/1best_recog/text.cer
-    tail -n 3 ${output_dir}/1best_recog/text.cer
-fi
-
-if [ $stage -le 3 ] && [ $stop_stage -ge 3 ];then
     echo "SpeechIO TIOBE textnorm"
     echo "$0 --> Normalizing REF text ..."
     ./utils/textnorm_zh.py \
-        --has_key --to_upper \
+        --has_key --to_lower \
         ${data_dir}/text \
         ${output_dir}/1best_recog/ref.txt
 
-    echo "$0 --> Normalizing HYP text ..."
-    ./utils/textnorm_zh.py \
-        --has_key --to_upper \
-        ${output_dir}/1best_recog/text.proc \
-        ${output_dir}/1best_recog/rec.txt
-    grep -v $'\t$' ${output_dir}/1best_recog/rec.txt > ${output_dir}/1best_recog/rec_non_empty.txt
+#    echo "$0 --> Normalizing HYP text ..."
+#    ./utils/textnorm_zh.py \
+#        --has_key --to_lower \
+#        ${output_dir}/1best_recog/text.proc \
+#        ${output_dir}/1best_recog/rec.txt
+
+#    grep -v $'\t$' ${output_dir}/1best_recog/rec.txt > ${output_dir}/1best_recog/rec_non_empty.txt
 
     echo "$0 --> computing WER/CER and alignment ..."
-    ./utils/error_rate_zh \
-        --tokenizer char \
-        --ref ${output_dir}/1best_recog/ref.txt \
-        --hyp ${output_dir}/1best_recog/rec_non_empty.txt \
-        ${output_dir}/1best_recog/DETAILS.txt | tee ${output_dir}/1best_recog/RESULTS.txt
-    rm -rf ${output_dir}/1best_recog/rec.txt ${output_dir}/1best_recog/rec_non_empty.txt
+#    ./utils/error_rate_zh \
+#        --tokenizer char \
+#        --ref ${output_dir}/1best_recog/ref.txt \
+#        --hyp ${output_dir}/1best_recog/rec_non_empty.txt \
+#        ${output_dir}/1best_recog/DETAILS.txt | tee ${output_dir}/1best_recog/RESULTS.txt
+#     rm -rf ${output_dir}/1best_recog/rec.txt ${output_dir}/1best_recog/rec_non_empty.txt
+    python3 ./utils/compute-wer.py --char=1 --v=1 \
+        ${output_dir}/1best_recog/ref.txt \
+        ${output_dir}/1best_recog/text > \
+        ${output_dir}/1best_recog/wer.txt
+    awk '/utt:/ { utt=$2 } /WER:/ { print utt, $2 }' \
+        ${output_dir}/1best_recog/wer.txt > \
+        ${data_dir}/utt2wer \
+
 fi
+
+
+#if [ $stage -le 3 ] && [ $stop_stage -ge 3 ];then
+#    echo "Computing WER ..."
+#    cp ${output_dir}/1best_recog/text ${output_dir}/1best_recog/text.proc
+#    cp ${data_dir}/text ${output_dir}/1best_recog/text.ref
+#    python utils/compute_wer.py ${output_dir}/1best_recog/text.ref ${output_dir}/1best_recog/text.proc ${output_dir}/1best_recog/text.cer
+#    tail -n 3 ${output_dir}/1best_recog/text.cer
+#fi
+
 
 done
