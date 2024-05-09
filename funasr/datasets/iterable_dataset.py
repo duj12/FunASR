@@ -281,15 +281,30 @@ class IterableESPnetDataset(IterableDataset):
 
         else:
             if self.key_file is not None:
-                uid_iter = (
-                    line.rstrip().split(maxsplit=1)[0]
-                    for line in open(self.key_file, encoding="utf-8")
-                )
+                # uid_iter = (
+                #     line.rstrip().split(maxsplit=1)[0]
+                #     for line in open(self.key_file, encoding="utf-8")
+                # )
+                uid_iter = []
+                for line in open(self.key_file, encoding="utf-8"):
+                    if '\t' not in line:
+                        uid_iter.append(line.rstrip().split(maxsplit=1)[0])
+                    else:
+                        uid_iter.append(line.rstrip().split('\t', maxsplit=1)[0])
+                uid_iter=tuple(uid_iter)
             elif len(self.path_name_type_list) != 0:
-                uid_iter = (
-                    line.rstrip().split(maxsplit=1)[0]
-                    for line in open(self.path_name_type_list[0][0], encoding="utf-8")
-                )
+                # uid_iter = (
+                #     line.rstrip().split(maxsplit=1)[0]
+                #     for line in open(self.path_name_type_list[0][0], encoding="utf-8")
+                # )
+                uid_iter = []
+                for line in open(self.path_name_type_list[0][0], encoding="utf-8"):
+                    if '\t' not in line:
+                        uid_iter.append(line.rstrip().split(maxsplit=1)[0])
+                    else:
+                        uid_iter.append(
+                            line.rstrip().split('\t', maxsplit=1)[0])
+                uid_iter = tuple(uid_iter)
             else:
                 uid_iter = iter(self.non_iterable_dataset)
 
@@ -314,7 +329,10 @@ class IterableESPnetDataset(IterableDataset):
                             line = next(f)
                         except StopIteration:
                             raise RuntimeError(f"{uid} is not found in the files")
-                        sps = line.rstrip().split(maxsplit=1)
+                        if '\t' not in line:
+                            sps = line.rstrip().split(maxsplit=1)
+                        else:
+                            sps = line.rstrip().split('\t', maxsplit=1)
                         if len(sps) != 2:
                             raise RuntimeError(
                                 f"This line doesn't include a space:"

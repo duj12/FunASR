@@ -376,7 +376,14 @@ def inference_paraformer(
             # N-best list of (text, token, token_int, hyp_object)
 
             time_beg = time.time()
-            results = speech2text(**batch)
+            # results = speech2text(**batch)
+            try:
+                results = speech2text(**batch)
+            except Exception as e:
+                logging.warning(f"Utterance {keys} {e}")
+                hyp = Hypothesis(score=0.0, scores={}, states={}, yseq=[])
+                results = [[" ", ["sil"], [2], hyp]] * nbest
+
             if len(results) < 1:
                 hyp = Hypothesis(score=0.0, scores={}, states={}, yseq=[])
                 results = [[" ", ["sil"], [2], hyp, 10, 6, []]] * nbest
