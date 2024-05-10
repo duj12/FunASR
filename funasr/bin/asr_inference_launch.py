@@ -382,11 +382,12 @@ def inference_paraformer(
             except Exception as e:
                 logging.warning(f"Utterance {keys} {e}")
                 hyp = Hypothesis(score=0.0, scores={}, states={}, yseq=[])
-                results = [[" ", ["sil"], [2], hyp]] * nbest
+                # ((text, token, token_int, hyp, timestamp, enc_len_batch_total, lfr_factor))
+                results = [[" ", ["sil"], [2], hyp, [], 10, 6]] * nbest
 
             if len(results) < 1:
                 hyp = Hypothesis(score=0.0, scores={}, states={}, yseq=[])
-                results = [[" ", ["sil"], [2], hyp, 10, 6, []]] * nbest
+                results = [[" ", ["sil"], [2], hyp, [], 10, 6]] * nbest
             time_end = time.time()
             forward_time = time_end - time_beg
             lfr_factor = results[0][-1]
