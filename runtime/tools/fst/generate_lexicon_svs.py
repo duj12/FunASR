@@ -3,6 +3,7 @@
 
 import sys
 import json
+import re
 
 # input
 # sys.argv[1]: lm dict, with all words in the corpus
@@ -23,8 +24,8 @@ def contain_oov(units):
 unit_table = []
 with open(sys.argv[2], 'r', encoding='utf8') as fin:
     unit_table = json.load(fin)
-    if '<blank>' not in unit_table:
-        unit_table = ['<blank>'] + unit_table
+    if unit_table[0] == "<unk>":
+        unit_table[0] = "<blank>"  # replace <unk> with <blank> for id==0
 print(f"unit size: {len(unit_table)}")
 
 # step 2: load sentence piece model
@@ -51,14 +52,18 @@ with open(sys.argv[1], 'r', encoding='utf8') as fin, \
             continue
         elif word == "<s>" or word == "</s>" or word=="<eps>":
             continue
-        elif word == '<unk>':
+        elif word == '<unk>' or word == '<blank>':
             fout.write('{}\t{}\n'.format(word, word))
             lexicon_table.add(word)
         else:
             # each word only has one pronunciation for e2e system
             if word in lexicon_table:
                 continue
-            pieces = sp.EncodeAsPieces(word)
+            if re.search(r"[A-Za-z0-9]", word) and not re.search(r"[\u4e00-\u9fff]", word):
+                pieces = sp.EncodeAsPieces("▁"+word)  # for English words, add ▁ at the beginning
+                # print ('English word {}, pieces {}'.format(word, pieces))
+            else:
+                pieces = sp.EncodeAsPieces(word)
             if contain_oov(pieces):
                 print(
                     'Ignoring words {}, which contains oov unit, piece {}'.format(
@@ -66,7 +71,7 @@ with open(sys.argv[1], 'r', encoding='utf8') as fin, \
                 )
                 # continue
             chars = ' '.join(
-                [p if p in unit_table else '<unk>' for p in pieces])
+                [p if p in unit_table else '<blank>' for p in pieces])  # replace oov with <blank>
             
             fout.write('{}\t{}\n'.format(word, chars))
             lexicon_table.add(word)
