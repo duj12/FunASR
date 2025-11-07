@@ -53,7 +53,7 @@ with open(sys.argv[1], 'r', encoding='utf8') as fin, \
         elif word == "<s>" or word == "</s>" or word=="<eps>":
             continue
         elif word == '<unk>' or word == '<blank>':
-            fout.write('{}\t{}\n'.format(word, word))
+            fout.write('{}\t{}\n'.format(word, '<blank>'))
             lexicon_table.add(word)
         else:
             # each word only has one pronunciation for e2e system
