@@ -4,7 +4,7 @@
 workspace=`pwd`
 
 # which gpu to train or finetune
-export CUDA_VISIBLE_DEVICES="0,1"
+export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
 gpu_num=$(echo $CUDA_VISIBLE_DEVICES | awk -F "," '{print NF}')
 
 # model_name from model_hub, or model_dir in local path
@@ -23,11 +23,14 @@ model_name_or_model_dir="iic/SenseVoiceSmall"
 train_data=${workspace}/data/train_example.jsonl
 val_data=${workspace}/data/val_example.jsonl
 
+train_data=/data/megastore/SHARE/TTS/VoiceClone1/250Hours_zh/train/sensevoice_zh_en.jsonl
+val_data=/data/megastore/SHARE/TTS/VoiceClone1/250Hours_zh/test/sensevoice.jsonl
+
 # exp output dir
-output_dir="./outputs"
+output_dir="./exp_250hours"
 log_file="${output_dir}/log.txt"
 
-deepspeed_config=${workspace}/../../ds_stage1.json
+deepspeed_config=${workspace}/../../deepspeed_conf/ds_stage1.json
 
 mkdir -p ${output_dir}
 echo "log_file: ${log_file}"
@@ -42,28 +45,50 @@ DISTRIBUTED_ARGS="
 
 echo $DISTRIBUTED_ARGS
 
-# funasr trainer path
-train_tool=../../../funasr/bin/train_ds.py
+# funasr trainer path  
+# batch_size=80000 for A100 80G, batch_size=24000 for 3090 24G
 
-torchrun $DISTRIBUTED_ARGS \
-${train_tool} \
-++model="${model_name_or_model_dir}" \
-++train_data_set_list="${train_data}" \
-++valid_data_set_list="${val_data}" \
-++dataset_conf.data_split_num=1 \
-++dataset_conf.batch_sampler="BatchSampler" \
-++dataset_conf.batch_size=6000  \
-++dataset_conf.sort_size=1024 \
-++dataset_conf.batch_type="token" \
-++dataset_conf.num_workers=4 \
-++train_conf.max_epoch=50 \
-++train_conf.log_interval=1 \
-++train_conf.resume=true \
-++train_conf.validate_interval=2000 \
-++train_conf.save_checkpoint_interval=2000 \
-++train_conf.keep_nbest_models=20 \
-++train_conf.avg_nbest_model=10 \
-++train_conf.use_deepspeed=false \
-++train_conf.deepspeed_config=${deepspeed_config} \
-++optim_conf.lr=0.0002 \
-++output_dir="${output_dir}" &> ${log_file}
+train_tool=../../../funasr/bin/train_ds.py
+run_command() {
+    torchrun $DISTRIBUTED_ARGS \
+        ${train_tool} \
+            ++model="${model_name_or_model_dir}" \
+            ++train_data_set_list="${train_data}" \
+            ++valid_data_set_list="${val_data}" \
+            ++dataset_conf.data_split_num=1 \
+            ++dataset_conf.batch_sampler="BatchSampler" \
+            ++dataset_conf.batch_size=80000  \
+            ++dataset_conf.sort_size=1024 \
+            ++dataset_conf.batch_type="token" \
+            ++dataset_conf.num_workers=4 \
+            ++dataset_conf.max_source_length=4500 \
+            ++dataset_conf.data_split_num=2 \
+            ++dataset_conf.preprocessor_speech=SpeechPreprocessAddNoiseReverb  \
+            ++dataset_conf.preprocessor_speech_conf.reverb_path=/data/megastore/Datasets/AudioData/Noise/RIRS_NOISES/rir.scp \
+            ++dataset_conf.preprocessor_speech_conf.noise_path=/data/megastore/Datasets/AudioData/Noise/WavNoise/noise.scp \
+            ++train_conf.max_epoch=60 \
+            ++train_conf.log_interval=100 \
+            ++train_conf.resume=true \
+            ++train_conf.validate_interval=2500 \
+            ++train_conf.save_checkpoint_interval=5000 \
+            ++train_conf.keep_nbest_models=100 \
+            ++train_conf.avg_keep_nbest_models_type="loss" \
+            ++train_conf.avg_nbest_model=10 \
+            ++train_conf.use_deepspeed=false \
+            ++train_conf.deepspeed_config=${deepspeed_config} \
+            ++optim_conf.lr=0.0002 \
+            ++output_dir="${output_dir}"  &> ${log_file}
+}
+
+# 循环运行
+while true; do
+    echo "Starting the command..."
+    run_command
+    if [ $? -eq 0 ]; then
+        echo "Command executed successfully."
+        break
+    else
+        echo "An error occurred. Retrying..."
+        sleep 5  # 等待5秒后重试
+    fi
+done
