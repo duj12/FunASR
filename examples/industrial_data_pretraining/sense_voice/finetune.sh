@@ -26,8 +26,11 @@ val_data=${workspace}/data/val_example.jsonl
 train_data=/data/megastore/SHARE/TTS/VoiceClone1/250Hours_zh/train/sensevoice_zh_en.jsonl
 val_data=/data/megastore/SHARE/TTS/VoiceClone1/250Hours_zh/test/sensevoice.jsonl
 
+train_data=/data/megastore/Datasets/ASR/jsonl/SenseVoice/train.list  # 135 files
+val_data=/data/megastore/Datasets/ASR/jsonl/SenseVoice/test.jsonl
+
 # exp output dir
-output_dir="./exp_250hours"
+output_dir="./exp_83whours"
 log_file="${output_dir}/log.txt"
 
 deepspeed_config=${workspace}/../../deepspeed_conf/ds_stage1.json
@@ -46,7 +49,7 @@ DISTRIBUTED_ARGS="
 echo $DISTRIBUTED_ARGS
 
 # funasr trainer path  
-# batch_size=80000 for A100 80G, batch_size=24000 for 3090 24G
+# batch_size=60000 for A100 80G, batch_size=24000 for 3090 24G
 
 train_tool=../../../funasr/bin/train_ds.py
 run_command() {
@@ -55,18 +58,17 @@ run_command() {
             ++model="${model_name_or_model_dir}" \
             ++train_data_set_list="${train_data}" \
             ++valid_data_set_list="${val_data}" \
-            ++dataset_conf.data_split_num=1 \
             ++dataset_conf.batch_sampler="BatchSampler" \
-            ++dataset_conf.batch_size=80000  \
+            ++dataset_conf.batch_size=60000  \
             ++dataset_conf.sort_size=1024 \
             ++dataset_conf.batch_type="token" \
             ++dataset_conf.num_workers=4 \
-            ++dataset_conf.max_source_length=4500 \
-            ++dataset_conf.data_split_num=2 \
+            ++dataset_conf.max_source_length=6000 \
+            ++dataset_conf.data_split_num=80 \
             ++dataset_conf.preprocessor_speech=SpeechPreprocessAddNoiseReverb  \
             ++dataset_conf.preprocessor_speech_conf.reverb_path=/data/megastore/Datasets/AudioData/Noise/RIRS_NOISES/rir.scp \
             ++dataset_conf.preprocessor_speech_conf.noise_path=/data/megastore/Datasets/AudioData/Noise/WavNoise/noise.scp \
-            ++train_conf.max_epoch=60 \
+            ++train_conf.max_epoch=10 \
             ++train_conf.log_interval=100 \
             ++train_conf.resume=true \
             ++train_conf.validate_interval=2500 \
@@ -77,7 +79,7 @@ run_command() {
             ++train_conf.use_deepspeed=false \
             ++train_conf.deepspeed_config=${deepspeed_config} \
             ++optim_conf.lr=0.0002 \
-            ++output_dir="${output_dir}"  &> ${log_file}
+            ++output_dir="${output_dir}" #  2>&1 | tee -a ${log_file}
 }
 
 # 循环运行
