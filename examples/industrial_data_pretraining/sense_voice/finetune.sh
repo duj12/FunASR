@@ -63,7 +63,7 @@ run_command() {
             ++dataset_conf.sort_size=1024 \
             ++dataset_conf.batch_type="token" \
             ++dataset_conf.num_workers=4 \
-            ++dataset_conf.max_source_length=6000 \
+            ++dataset_conf.max_source_length=4000 \
             ++dataset_conf.data_split_num=80 \
             ++dataset_conf.preprocessor_speech=SpeechPreprocessAddNoiseReverb  \
             ++dataset_conf.preprocessor_speech_conf.reverb_path=/data/megastore/Datasets/AudioData/Noise/RIRS_NOISES/rir.scp \

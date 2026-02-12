@@ -1,5 +1,6 @@
 import torch
 import random
+import logging
 
 
 from funasr.register import tables
@@ -68,15 +69,30 @@ class AudioDataset(torch.utils.data.Dataset):
         # import pdb;
         # pdb.set_trace()
         source = item["source"]
-        data_src = load_audio_text_image_video(source, fs=self.fs)
-        if self.preprocessor_speech:
-            data_src = self.preprocessor_speech(data_src, fs=self.fs)
-
+        
+        # 默认假设音频加载成功
+        audio_load_success = True
+        target = item["target"]
+        
+        try:
+            # 尝试正常加载音频文件
+            data_src = load_audio_text_image_video(source, fs=self.fs)
+            if self.preprocessor_speech:
+                data_src = self.preprocessor_speech(data_src, fs=self.fs)
+        except Exception as e:
+            logging.error(f"Load audio file {source} failed: {e}\n data_src: {data_src}")
+            # 音频读取失败时，生成随机噪声
+            logging.warning(f"Failed to load audio file {source}: {e}, generating random noise instead")
+            # 生成1秒的随机噪声，采样率16kHz
+            noise_length = int(self.fs * 1.0)  # 1秒
+            data_src = torch.randn(noise_length) * 0.1  # 小幅度噪声
+            audio_load_success = False
+            target = ""  # 音频加载失败时使用空文本
+        
         speech, speech_lengths = extract_fbank(
             data_src, data_type=self.data_type, frontend=self.frontend, is_final=True
         )  # speech: [b, T, d]
 
-        target = item["target"]
         if self.preprocessor_text:
             target = self.preprocessor_text(target)
 

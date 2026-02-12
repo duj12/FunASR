@@ -83,14 +83,19 @@ class SenseVoiceDataset(torch.utils.data.Dataset):
             item = self.index_ds[index_cur]
 
             source = item["source"]
+            target = item["target"]
             try:
                 data_src = load_audio_text_image_video(source, fs=self.fs)
+                if self.preprocessor_speech:
+                    data_src = self.preprocessor_speech(data_src, fs=self.fs)
             except Exception as e:
                 logging.error(f"Loading wav failed! {str(e)}, {traceback.format_exc()}")
-                continue
-
-            if self.preprocessor_speech:
-                data_src = self.preprocessor_speech(data_src, fs=self.fs)
+                logging.error(f"data_src: {data_src}, use random noise instead")
+                # 音频读取失败时，生成随机噪声
+                noise_length = int(self.fs * 1.0)  # 1秒
+                data_src = torch.randn(noise_length) * 0.1  # 小幅度噪声\
+                target = ""  # 音频加载失败时使用空文本
+                
             speech, speech_lengths = extract_fbank(
                 data_src, data_type=self.data_type, frontend=self.frontend, is_final=True
             )  # speech: [b, T, d]
@@ -99,7 +104,6 @@ class SenseVoiceDataset(torch.utils.data.Dataset):
                 continue
             if self.permute:
                 speech = speech.permute(0, 2, 1)
-            target = item["target"]
             if self.preprocessor_text:
                 target = self.preprocessor_text(target)
 
@@ -306,11 +310,18 @@ class SenseVoiceCTCDataset(torch.utils.data.Dataset):
             item = self.index_ds[index_cur]
 
             source = item["source"]
+            asr_target = item["target"]
             try:
                 data_src = load_audio_text_image_video(source, fs=self.fs)
+                if self.preprocessor_speech:
+                    data_src = self.preprocessor_speech(data_src, fs=self.fs)
             except Exception as e:
                 logging.error(f"Loading wav failed! {str(e)}, {traceback.format_exc()}")
-                continue
+                logging.error(f"data_src: {data_src}, use random noise instead")
+                # 音频读取失败时，生成随机噪声
+                noise_length = int(self.fs * 1.0)  # 1秒
+                data_src = torch.randn(noise_length) * 0.1  # 小幅度噪声\
+                asr_target = ""  # 音频加载失败时使用空文本
 
             if self.preprocessor_speech:
                 data_src = self.preprocessor_speech(data_src, fs=self.fs)
@@ -322,7 +333,7 @@ class SenseVoiceCTCDataset(torch.utils.data.Dataset):
                 continue
             if self.permute:
                 speech = speech.permute(0, 2, 1)
-            asr_target = item["target"]
+            
             if self.preprocessor_text:
                 asr_target = self.preprocessor_text(asr_target)
             emo_target = item.get("emo_target", "<|NEUTRAL|>")
