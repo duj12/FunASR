@@ -343,8 +343,8 @@ class SenseVoiceCTCDataset(torch.utils.data.Dataset):
 
             target_ids = self.tokenizer.encode(asr_target, allowed_special="all")
             target_ids_len = len(target_ids)  # [text]
-            if target_ids_len > 200:
-                continue
+            # if target_ids_len > 200:
+            #     continue
 
             lid_ids = self.tokenizer.encode(text_language, allowed_special="all")
             emo_ids = self.tokenizer.encode(emo_target, allowed_special="all")

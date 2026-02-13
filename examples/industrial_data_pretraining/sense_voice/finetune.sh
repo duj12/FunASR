@@ -49,7 +49,7 @@ DISTRIBUTED_ARGS="
 echo $DISTRIBUTED_ARGS
 
 # funasr trainer path  
-# batch_size=60000 for A100 80G, batch_size=24000 for 3090 24G
+# batch_size=32000 for A100 80G, batch_size=16000 for 3090 24G
 
 train_tool=../../../funasr/bin/train_ds.py
 run_command() {
@@ -59,11 +59,15 @@ run_command() {
             ++train_data_set_list="${train_data}" \
             ++valid_data_set_list="${val_data}" \
             ++dataset_conf.batch_sampler="BatchSampler" \
-            ++dataset_conf.batch_size=60000  \
+            ++dataset_conf.batch_size=32000  \
             ++dataset_conf.sort_size=1024 \
             ++dataset_conf.batch_type="token" \
             ++dataset_conf.num_workers=4 \
-            ++dataset_conf.max_source_length=4000 \
+            ++dataset_conf.max_source_length=3600 \
+            ++dataset_conf.min_source_length=20 \
+            ++dataset_conf.max_target_length=160 \
+            ++dataset_conf.min_target_length=1 \
+            ++dataset_conf.max_token_length=4000 \
             ++dataset_conf.data_split_num=80 \
             ++dataset_conf.preprocessor_speech=SpeechPreprocessAddNoiseReverb  \
             ++dataset_conf.preprocessor_speech_conf.reverb_path=/data/megastore/Datasets/AudioData/Noise/RIRS_NOISES/rir.scp \

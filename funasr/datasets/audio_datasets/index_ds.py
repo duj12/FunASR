@@ -105,8 +105,8 @@ class IndexDSJsonlRankFull(torch.utils.data.Dataset):
                         ):
                             continue
 
-                        if (source_len + target_len) > self.max_token_length:
-                            continue
+                        # if (source_len + target_len) > self.max_token_length:
+                        #     continue
 
                         contents_i = {
                             "source": source,
