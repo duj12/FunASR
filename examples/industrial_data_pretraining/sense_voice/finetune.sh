@@ -59,7 +59,7 @@ run_command() {
             ++train_data_set_list="${train_data}" \
             ++valid_data_set_list="${val_data}" \
             ++dataset_conf.batch_sampler="BatchSampler" \
-            ++dataset_conf.batch_size=32000  \
+            ++dataset_conf.batch_size=40000  \
             ++dataset_conf.sort_size=1024 \
             ++dataset_conf.batch_type="token" \
             ++dataset_conf.num_workers=4 \

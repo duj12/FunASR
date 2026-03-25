@@ -1,13 +1,45 @@
 import json
 import logging
+import time
 
 import re
 import torch
 import random
 import traceback
 import numpy as np
+import torch.distributed as dist
 from funasr.register import tables
 from funasr.utils.load_utils import extract_fbank, load_audio_text_image_video
+
+
+def _open_with_retry(filepath, max_retries=10, base_delay=0.5, encoding="utf-8"):
+    """Open a file with retry and exponential backoff for NAS compatibility."""
+    for attempt in range(max_retries):
+        try:
+            return open(filepath, encoding=encoding)
+        except OSError as e:
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt) + random.uniform(0, 0.5)
+                logging.warning(
+                    f"Failed to open {filepath} (attempt {attempt + 1}/{max_retries}): {e}, "
+                    f"retrying in {delay:.1f}s"
+                )
+                time.sleep(delay)
+            else:
+                logging.error(f"Failed to open {filepath} after {max_retries} attempts: {e}")
+                raise
+
+
+def _stagger_by_rank(base_delay=1.0):
+    """Sleep proportionally to rank to stagger NAS reads across processes."""
+    try:
+        rank = dist.get_rank()
+        if rank > 0:
+            delay = rank * base_delay
+            logging.info(f"Rank {rank}: staggering file read by {delay:.1f}s")
+            time.sleep(delay)
+    except Exception:
+        pass
 
 
 @tables.register("dataset_classes", "FunASR")
@@ -371,7 +403,7 @@ class FunASR(torch.utils.data.Dataset):  # torch.utils.data.Dataset
             if not is_training:
                 data_split_num = 1
                 data_split_i = 0
-            with open(path, encoding="utf-8") as fin:
+            with _open_with_retry(path) as fin:
                 file_list_all = fin.readlines()
 
                 num_per_slice = (len(file_list_all) - 1) // data_split_num + 1  # 16
@@ -385,11 +417,12 @@ class FunASR(torch.utils.data.Dataset):  # torch.utils.data.Dataset
         else:
             file_list = [path]
 
+        _stagger_by_rank(base_delay=1.0)
         contents = []
         total_whrs = 0.0
         total_token_for_llm_B = 0.0
         for file_json in file_list:
-            with open(file_json.strip(), encoding="utf-8") as fin:
+            with _open_with_retry(file_json.strip()) as fin:
                 for line in fin:
                     try:
                         data_dict = json.loads(line.strip())
