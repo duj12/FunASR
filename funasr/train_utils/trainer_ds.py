@@ -905,7 +905,7 @@ class Trainer:
         data_split_num = loss_dict["data_split_num"]
         log_step = loss_dict.get("log_step", None)
 
-        if (batch_idx + 1) % self.log_interval == 0:
+        if (batch_idx + 1) % self.log_interval == 0 or tag=='val':
             batch_idx = log_step if log_step is not None else batch_idx
             gpu_info = (
                 "GPU, memory: usage: {:.3f} GB, "
