@@ -166,7 +166,9 @@ def main(**kwargs):
     dataloader_tr, dataloader_val = None, None
     for epoch in range(trainer.start_epoch, trainer.max_epoch):
         time1 = time.perf_counter()
-
+        if trainer.start_data_split_i >= dataloader.data_split_num:
+            logging.info("current split num is bietter than data split num, maybe you change the training data source, set start_data_split_i to 0")
+            trainer.start_data_split_i = 0
         for data_split_i in range(trainer.start_data_split_i, dataloader.data_split_num):
             time_slice_i = time.perf_counter()
 

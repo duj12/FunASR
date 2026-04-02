@@ -121,6 +121,12 @@ class IndexDSJsonlRankFull(torch.utils.data.Dataset):
                         source = data["source"].replace(
                             "/cpfs01", "/cpfs_speech/data"
                         )  # only use in alibaba gpu group: .replace("/cpfs01", "/cpfs_speech/data")
+                        
+                        # if not source.startswith('http'):
+                        #     if not os.path.exists(source):
+                        #         logging.warning(f"source path {source} not exists")
+                        #         continue
+                        
                         target = data["target"]
                         source_len = data.get("source_len", 1)
                         target_len = data.get("target_len", 0)

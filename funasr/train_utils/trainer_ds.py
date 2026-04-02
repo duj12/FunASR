@@ -23,6 +23,105 @@ except:
     wandb = None
 
 
+def _merge_checkpoint_client_state(checkpoint):
+    """Flatten checkpoint; DeepSpeed may nest training meta under client_state."""
+    if checkpoint is None or not isinstance(checkpoint, dict):
+        return {}
+    out = dict(checkpoint)
+    cs = checkpoint.get("client_state")
+    if isinstance(cs, dict):
+        out.update(cs)
+    return out
+
+
+def _pick_src_state_dict(checkpoint):
+    """Extract model weight dict from a loaded checkpoint (same order as load_pretrained_model)."""
+    cp = _merge_checkpoint_client_state(checkpoint)
+    if "state_dict" in cp and isinstance(cp["state_dict"], dict):
+        return cp["state_dict"]
+    if "model_state_dict" in cp and isinstance(cp["model_state_dict"], dict):
+        return cp["model_state_dict"]
+    if "model" in cp and isinstance(cp["model"], dict) and cp["model"]:
+        return cp["model"]
+    if cp and all(torch.is_tensor(v) for v in cp.values()):
+        return cp
+    raise KeyError(
+        "checkpoint 中未找到 state_dict / model_state_dict / model，且顶层也不是纯张量权重 dict"
+    )
+
+
+def _is_weights_only_checkpoint(checkpoint):
+    """无 optimizer/scheduler 时视为仅权重（预训练或 extract 导出），不恢复训练进度。"""
+    if not isinstance(checkpoint, dict):
+        return True
+    cp = _merge_checkpoint_client_state(checkpoint)
+    if "optimizer" in cp and cp["optimizer"] is not None:
+        return False
+    if "scheduler" in cp and cp["scheduler"] is not None:
+        return False
+    return True
+
+
+def _apply_src_state_to_model(model, src_state, excludes=None):
+    """Copy matching keys from src_state into model.state_dict() (handles module. prefix)."""
+    dst_state = model.state_dict()
+    for k in dst_state.keys():
+        excludes_flag = False
+        if excludes is not None:
+            for k_ex in excludes:
+                k_tmp = k.replace("module.", "")
+                if k_tmp.startswith(k_ex):
+                    logging.info(f"key: {k} matching: {k_ex}, excluded")
+                    excludes_flag = True
+                    break
+        if excludes_flag:
+            continue
+        if not k.startswith("module.") and "module." + k in src_state.keys():
+            k_ddp = "module." + k
+        elif k.startswith("module.") and "module." + k not in src_state.keys():
+            k_ddp = k.replace("module.", "", 1)
+        else:
+            k_ddp = k
+        if k_ddp in src_state.keys():
+            dst_state[k] = src_state[k_ddp]
+        else:
+            print(f"Miss key in ckpt: model: {k}, ckpt: {k_ddp}")
+
+    model.load_state_dict(dst_state)
+
+
+def _apply_training_meta_from_checkpoint(trainer, checkpoint):
+    """从完整训练 checkpoint 恢复 epoch / step / split 等。"""
+    trainer.start_epoch = checkpoint.get("epoch", 0)
+    trainer.saved_ckpts = checkpoint.get("saved_ckpts", {})
+    trainer.val_acc_step_or_epoch = checkpoint.get("val_acc_step_or_epoch", {})
+    trainer.val_loss_step_or_epoch = checkpoint.get("val_loss_step_or_epoch", {})
+    trainer.best_step_or_epoch = checkpoint.get("best_step_or_epoch", "")
+    trainer.start_data_split_i = checkpoint.get("data_split_i", 0)
+    trainer.batch_total = checkpoint.get("batch_total", 0)
+    trainer.start_step = checkpoint.get("step", 0)
+    trainer.start_step = 0 if trainer.start_step is None else trainer.start_step
+    trainer.step_in_epoch = checkpoint.get("step_in_epoch", 0)
+    trainer.step_in_epoch = 0 if trainer.step_in_epoch is None else trainer.step_in_epoch
+    trainer.train_acc_avg = checkpoint.get("train_acc_avg", 0.0)
+    trainer.train_loss_avg = checkpoint.get("train_loss_avg", 0.0)
+
+
+def _reset_training_meta_for_weights_only(trainer):
+    """仅加载权重时从 0 开始训练（不继承 step/epoch/split）。"""
+    trainer.start_epoch = 0
+    trainer.saved_ckpts = {}
+    trainer.val_acc_step_or_epoch = {}
+    trainer.val_loss_step_or_epoch = {}
+    trainer.best_step_or_epoch = ""
+    trainer.start_data_split_i = 0
+    trainer.batch_total = 0
+    trainer.start_step = 0
+    trainer.step_in_epoch = 0
+    trainer.train_acc_avg = 0.0
+    trainer.train_loss_avg = 0.0
+
+
 @contextmanager
 def maybe_autocast(dtype=None, use_deepspeed=False):
     if use_deepspeed:
@@ -421,44 +520,61 @@ class Trainer:
 
             if self.use_deepspeed:
                 ckpt = os.path.join(self.output_dir, "model.pt")
-                if os.path.exists(ckpt):
+                if os.path.isfile(ckpt):
+                    # 单个 .pt 文件：可能是仅含 state_dict 的权重，或完整训练 checkpoint
+                    checkpoint = torch.load(ckpt, map_location="cpu")
+                    checkpoint = _merge_checkpoint_client_state(checkpoint)
+                    try:
+                        src_state = _pick_src_state_dict(checkpoint)
+                    except KeyError as e:
+                        logging.error("Resume failed: %s", e)
+                    else:
+                        _apply_src_state_to_model(model, src_state, self.excludes)
+                        weights_only = _is_weights_only_checkpoint(checkpoint)
+                        if weights_only:
+                            _reset_training_meta_for_weights_only(self)
+                            logging.info(
+                                "Resume: loaded weights-only checkpoint (DeepSpeed file); "
+                                "optimizer/scheduler not restored; training starts from epoch 0."
+                            )
+                        else:
+                            # 完整训练状态（含 optimizer/scheduler）
+                            try:
+                                checkpoint_ds = checkpoint
+                                if "optimizer" in checkpoint_ds:
+                                    optim.load_state_dict(checkpoint_ds["optimizer"])
+                                if "scheduler" in checkpoint_ds:
+                                    scheduler.load_state_dict(checkpoint_ds["scheduler"])
+                                if scaler is not None and "scaler_state" in checkpoint_ds:
+                                    scaler.load_state_dict(checkpoint_ds["scaler_state"])
+                            except Exception as e:
+                                logging.warning(
+                                    "Loaded model weights from file; optimizer/scheduler load failed: %s",
+                                    e,
+                                )
+                            _apply_training_meta_from_checkpoint(self, checkpoint)
+                        if "train_acc_avg" in checkpoint:
+                            print(checkpoint["train_acc_avg"])
+                        model.to(self.device)
+                        logging.info("Checkpoint loaded successfully from '%s'", ckpt)
+                elif os.path.exists(ckpt):
                     _, checkpoint = model.load_checkpoint(self.output_dir, "model.pt")
-                    self.start_epoch = checkpoint["epoch"]
-                    self.saved_ckpts = checkpoint["saved_ckpts"]
-                    self.val_acc_step_or_epoch = (
-                        checkpoint["val_acc_step_or_epoch"]
-                        if "val_acc_step_or_epoch" in checkpoint
-                        else {}
-                    )
-                    self.val_loss_step_or_epoch = (
-                        checkpoint["val_loss_step_or_epoch"]
-                        if "val_loss_step_or_epoch" in checkpoint
-                        else {}
-                    )
-                    self.best_step_or_epoch = (
-                        checkpoint["best_step_or_epoch"]
-                        if "best_step_or_epoch" in checkpoint
-                        else ""
-                    )
-                    self.start_data_split_i = (
-                        checkpoint["data_split_i"] if "data_split_i" in checkpoint else 0
-                    )
-                    self.batch_total = (
-                        checkpoint["batch_total"] if "batch_total" in checkpoint else 0
-                    )
-                    self.start_step = checkpoint["step"] if "step" in checkpoint else 0
+                    checkpoint = _merge_checkpoint_client_state(checkpoint)
+                    self.start_epoch = checkpoint.get("epoch", 0)
+                    self.saved_ckpts = checkpoint.get("saved_ckpts", {})
+                    self.val_acc_step_or_epoch = checkpoint.get("val_acc_step_or_epoch", {})
+                    self.val_loss_step_or_epoch = checkpoint.get("val_loss_step_or_epoch", {})
+                    self.best_step_or_epoch = checkpoint.get("best_step_or_epoch", "")
+                    self.start_data_split_i = checkpoint.get("data_split_i", 0)
+                    self.batch_total = checkpoint.get("batch_total", 0)
+                    self.start_step = checkpoint.get("step", 0)
                     self.start_step = 0 if self.start_step is None else self.start_step
-                    self.step_in_epoch = (
-                        checkpoint["step_in_epoch"] if "step_in_epoch" in checkpoint else 0
-                    )
+                    self.step_in_epoch = checkpoint.get("step_in_epoch", 0)
                     self.step_in_epoch = 0 if self.step_in_epoch is None else self.step_in_epoch
-                    print(checkpoint["train_acc_avg"])
-                    self.train_acc_avg = (
-                        checkpoint["train_acc_avg"] if "train_acc_avg" in checkpoint else 0
-                    )
-                    self.train_loss_avg = (
-                        checkpoint["train_loss_avg"] if "train_loss_avg" in checkpoint else 0
-                    )
+                    if "train_acc_avg" in checkpoint:
+                        print(checkpoint["train_acc_avg"])
+                    self.train_acc_avg = checkpoint.get("train_acc_avg", 0.0)
+                    self.train_loss_avg = checkpoint.get("train_loss_avg", 0.0)
                     model.to(self.device)
                     print(f"Checkpoint loaded successfully from '{ckpt}'")
                 else:
@@ -468,75 +584,30 @@ class Trainer:
                 ckpt = os.path.join(self.output_dir, "model.pt")
                 if os.path.isfile(ckpt):
                     checkpoint = torch.load(ckpt, map_location="cpu")
-                    self.start_epoch = checkpoint["epoch"]
-                    # self.model.load_state_dict(checkpoint['state_dict'])
-                    src_state = checkpoint["state_dict"]
-                    dst_state = model.state_dict()
-                    for k in dst_state.keys():
-                        excludes_flag = False
-                        if self.excludes is not None:
-                            for k_ex in self.excludes:
-                                k_tmp = k.replace("module.", "")
-                                if k_tmp.startswith(k_ex):
-                                    logging.info(f"key: {k} matching: {k_ex}, excluded")
-                                    excludes_flag = True
-                                    break
-                        if excludes_flag:
-                            continue
-                        if not k.startswith("module.") and "module." + k in src_state.keys():
-                            k_ddp = "module." + k
-                        elif k.startswith("module.") and "module." + k not in src_state.keys():
-                            k_ddp = k.replace("module.", "", 1)
+                    checkpoint = _merge_checkpoint_client_state(checkpoint)
+                    try:
+                        src_state = _pick_src_state_dict(checkpoint)
+                    except KeyError as e:
+                        logging.error("Resume failed: %s", e)
+                    else:
+                        _apply_src_state_to_model(model, src_state, self.excludes)
+                        weights_only = _is_weights_only_checkpoint(checkpoint)
+                        if weights_only:
+                            _reset_training_meta_for_weights_only(self)
+                            logging.info(
+                                "Resume: loaded weights-only checkpoint; "
+                                "optimizer/scheduler not restored; training starts from epoch 0."
+                            )
                         else:
-                            k_ddp = k
-                        if k_ddp in src_state.keys():
-                            dst_state[k] = src_state[k_ddp]
-                        else:
-                            print(f"Miss key in ckpt: model: {k}, ckpt: {k_ddp}")
-
-                    model.load_state_dict(dst_state)
-                    optim.load_state_dict(checkpoint["optimizer"])
-                    scheduler.load_state_dict(checkpoint["scheduler"])
-                    if scaler is not None and "scaler_state" in checkpoint:
-                        scaler.load_state_dict(checkpoint["scaler_state"])
-
-                    self.saved_ckpts = checkpoint["saved_ckpts"]
-                    self.val_acc_step_or_epoch = (
-                        checkpoint["val_acc_step_or_epoch"]
-                        if "val_acc_step_or_epoch" in checkpoint
-                        else {}
-                    )
-                    self.val_loss_step_or_epoch = (
-                        checkpoint["val_loss_step_or_epoch"]
-                        if "val_loss_step_or_epoch" in checkpoint
-                        else {}
-                    )
-                    self.best_step_or_epoch = (
-                        checkpoint["best_step_or_epoch"]
-                        if "best_step_or_epoch" in checkpoint
-                        else ""
-                    )
-                    self.start_data_split_i = (
-                        checkpoint["data_split_i"] if "data_split_i" in checkpoint else 0
-                    )
-                    self.batch_total = (
-                        checkpoint["batch_total"] if "batch_total" in checkpoint else 0
-                    )
-                    self.start_step = checkpoint["step"] if "step" in checkpoint else 0
-                    self.start_step = 0 if self.start_step is None else self.start_step
-                    self.step_in_epoch = (
-                        checkpoint["step_in_epoch"] if "step_in_epoch" in checkpoint else 0
-                    )
-                    self.step_in_epoch = 0 if self.step_in_epoch is None else self.step_in_epoch
-                    print(checkpoint["train_acc_avg"])
-                    self.train_acc_avg = (
-                        checkpoint["train_acc_avg"] if "train_acc_avg" in checkpoint else 0
-                    )
-                    self.train_loss_avg = (
-                        checkpoint["train_loss_avg"] if "train_loss_avg" in checkpoint else 0
-                    )
-                    model.to(self.device)
-                    print(f"Checkpoint loaded successfully from '{ckpt}'")
+                            optim.load_state_dict(checkpoint["optimizer"])
+                            scheduler.load_state_dict(checkpoint["scheduler"])
+                            if scaler is not None and "scaler_state" in checkpoint:
+                                scaler.load_state_dict(checkpoint["scaler_state"])
+                            _apply_training_meta_from_checkpoint(self, checkpoint)
+                        if "train_acc_avg" in checkpoint:
+                            print(checkpoint["train_acc_avg"])
+                        model.to(self.device)
+                        logging.info("Checkpoint loaded successfully from '%s'", ckpt)
                 else:
                     print(f"No checkpoint found at '{ckpt}', does not resume status!")
 
