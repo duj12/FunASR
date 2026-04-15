@@ -26,14 +26,14 @@ def main_hydra(cfg: DictConfig):
         if torch.cuda.is_available()
         else "mps" if torch.backends.mps.is_available() else "cpu"
     )
-
+    print(f"device: {device}")
     from funasr import AutoModel
 
     model = AutoModel(
         model=model_dir,
         trust_remote_code=True,
-        vad_model="fsmn-vad",
-        vad_kwargs={"max_single_segment_time": 30000},
+        # vad_model="fsmn-vad",
+        # vad_kwargs={"max_single_segment_time": 30000},
         remote_code="./model.py",
         device=device,
     )
@@ -52,6 +52,7 @@ def main_hydra(cfg: DictConfig):
                 if len(parts) == 2:
                     text = model.generate(input=[parts[1]], cache={}, batch_size=1)[0]["text"]
                     f2.write(f"{parts[0]}\t{text}\n")
+                    f2.flush()
 
 
 if __name__ == "__main__":

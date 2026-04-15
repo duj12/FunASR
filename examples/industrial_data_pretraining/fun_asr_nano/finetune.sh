@@ -18,7 +18,7 @@ train_data=/data/megastore/Datasets/ASR/jsonl/FunASR_Nano/finetune.list
 val_data=/data/megastore/Datasets/ASR/jsonl/FunASR_Nano/test.list
 
 # exp output dir
-output_dir="./exp_nano_ft"
+output_dir="./exp_nano_ft_ada+enc"
 log_file="${output_dir}/log.txt"
 
 deepspeed_config=${workspace}/deepspeed_conf/ds_stage1.json
@@ -105,7 +105,7 @@ run_command() {
             ++train_conf.use_deepspeed=false \
             ++train_conf.deepspeed_config=${deepspeed_config} \
             ++train_conf.find_unused_parameters=true \
-            ++audio_encoder_conf.freeze=true \
+            ++audio_encoder_conf.freeze=false \
             ++audio_adaptor_conf.freeze=false \
             ++llm_conf.freeze=true \
             ++optim_conf.lr=0.0002 \
