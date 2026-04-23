@@ -30,7 +30,7 @@ VLLM_MODEL_OUTPUT="${ASR_SERVER_DIR}/checkpoints/yuekai/Fun-ASR-Nano-2512-vllm"
 # FunASR 仓库内脚本（本地 D: 盘对应替换前缀即可）
 FUNASR_NANO_DIR="/data/megastore/Projects/DuJing/code/FunASR-main/examples/industrial_data_pretraining/fun_asr_nano"
 # 训练产出目录：内含 model.pt、model.pt.ep* 等
-ASR_MODEL_DIR="${FUNASR_NANO_DIR}/exp_nano_ft_ada+enc"
+ASR_MODEL_DIR="${FUNASR_NANO_DIR}/exp_nano_ft"
 
 MERGE_SCRIPT="${FUNASR_NANO_DIR}/merge_ckpt_with_base.py"
 EXPORT_SCRIPT="${FUNASR_NANO_DIR}/export_nano_llm_for_vllm.py"
@@ -85,6 +85,48 @@ kill_server() {
         echo "$pids" | xargs kill -9 2>/dev/null || true
         sleep 2
     fi
+}
+
+stop_process_group() {
+    # 优雅停止一个“进程组”（通常等于服务主进程 PID），确保子进程/worker 一并退出，从而释放显存
+    # 用法: stop_process_group <pgid> [timeout_s]
+    local pgid=$1
+    local timeout=${2:-30}
+    local elapsed=0
+
+    if [ -z "$pgid" ]; then
+        return 0
+    fi
+
+    # 若进程不存在，直接返回
+    if ! kill -0 "$pgid" 2>/dev/null; then
+        return 0
+    fi
+
+    log "优雅停止服务进程组 PGID=${pgid} (SIGTERM, timeout=${timeout}s)"
+    kill -TERM "--" "-${pgid}" 2>/dev/null || true
+
+    while kill -0 "$pgid" 2>/dev/null; do
+        sleep 1
+        elapsed=$((elapsed + 1))
+        if [ "$elapsed" -ge "$timeout" ]; then
+            break
+        fi
+    done
+
+    if kill -0 "$pgid" 2>/dev/null; then
+        log "超时未退出，强制停止进程组 PGID=${pgid} (SIGKILL)"
+        kill -KILL "--" "-${pgid}" 2>/dev/null || true
+        sleep 2
+    fi
+}
+
+stop_server() {
+    # 优先按进程组停（释放显存更可靠），再按端口兜底
+    local port=$1
+    local pgid=$2
+    stop_process_group "$pgid" 40
+    kill_server "$port"
 }
 
 activate_conda() {
@@ -213,10 +255,11 @@ for MODEL_PT in "${MODEL_PTS[@]}"; do
 
     # ---- 3) 启动服务 ----
     log "[3/5] 启动 funasr_wss_server (port ${SERVER_PORT})"
-    kill_server "$SERVER_PORT"
+    stop_server "$SERVER_PORT" "${SERVER_PID:-}"
 
     cd "$ASR_SERVER_DIR"
-    nohup python -u funasr_wss_server.py \
+    # setsid: 为服务创建独立 session/process-group，便于后续 kill -TERM -PGID 一次性杀掉所有子进程（vLLM workers 等）
+    nohup setsid python -u funasr_wss_server.py \
         --host "$SERVER_HOST_LISTEN" \
         --port "$SERVER_PORT" \
         --device cuda \
@@ -228,7 +271,7 @@ for MODEL_PT in "${MODEL_PTS[@]}"; do
 
     if ! wait_port_listen "$SERVER_PORT" 240; then
         log "ERROR: 服务未启动成功，跳过 ${MODEL_NAME}"
-        kill_server "$SERVER_PORT"
+        stop_server "$SERVER_PORT" "$SERVER_PID"
         echo "${MODEL_NAME}  SERVER_FAILED" >> "$RESULT_FILE"
         continue
     fi
@@ -251,12 +294,12 @@ for MODEL_PT in "${MODEL_PTS[@]}"; do
         --vad_tail_sil 800 \
         --vad_max_len 60000; then
         log "ERROR: 客户端失败: ${MODEL_NAME}"
-        kill_server "$SERVER_PORT"
+        stop_server "$SERVER_PORT" "$SERVER_PID"
         echo "${MODEL_NAME}  CLIENT_FAILED" >> "$RESULT_FILE"
         continue
     fi
 
-    kill_server "$SERVER_PORT"
+    stop_server "$SERVER_PORT" "$SERVER_PID"
 
     # ---- 5) WER ----
     log "[5/5] run_wer.sh"
