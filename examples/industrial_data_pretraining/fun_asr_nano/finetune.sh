@@ -18,7 +18,7 @@ train_data=/data/megastore/Datasets/ASR/jsonl/FunASR_Nano/finetune.list
 val_data=/data/megastore/Datasets/ASR/jsonl/FunASR_Nano/test.list
 
 # exp output dir
-output_dir="./exp_nano_ft"
+output_dir="./exp_nano_ft_ada+enc+lora"
 log_file="${output_dir}/log.txt"
 
 deepspeed_config=${workspace}/deepspeed_conf/ds_stage1.json
@@ -35,15 +35,17 @@ DISTRIBUTED_ARGS="
 "
 echo $DISTRIBUTED_ARGS
 
-            # ++dataset_conf.preprocessor_speech=SpeechPreprocessAddNoiseReverb  \
-            # ++dataset_conf.preprocessor_speech_conf.reverb_path=/data/megastore/Datasets/AudioData/Noise/RIRS_NOISES/rir.scp \
-            # ++dataset_conf.preprocessor_speech_conf.noise_path=/data/megastore/Datasets/AudioData/Noise/WavNoise/noise.scp \
-            # ++train_conf.effective_save_name_excludes="None" \
-
 # funasr trainer path
 train_tool=`which funasr-train-ds`
 train_tool=../../../funasr/bin/train_ds.py
 echo "Using funasr trainer: ${train_tool}"
+
+# ========== 训练配置 ==========
+# LoRA 参数 (用于 LLM 部分的低秩适配)
+lora_rank=8
+lora_alpha=16
+lora_dropout=0.05
+lora_target_modules="q_proj,k_proj,v_proj,o_proj"
 
 run_command() {
     torchrun $DISTRIBUTED_ARGS \
@@ -76,7 +78,14 @@ run_command() {
             ++train_conf.find_unused_parameters=true \
             ++audio_encoder_conf.freeze=false \
             ++audio_adaptor_conf.freeze=false \
-            ++llm_conf.freeze=false \
+            ++llm_conf.freeze=true \
+            ++llm_conf.use_lora=true \
+            ++llm_conf.lora_conf.r=${lora_rank} \
+            ++llm_conf.lora_conf.lora_alpha=${lora_alpha} \
+            ++llm_conf.lora_conf.lora_dropout=${lora_dropout} \
+            ++llm_conf.lora_conf.target_modules="[${lora_target_modules}]" \
+            ++llm_conf.lora_conf.bias=none \
+            ++llm_conf.lora_conf.task_type=CAUSAL_LM \
             ++optim_conf.lr=0.0002 \
             ++output_dir="${output_dir}" #  2>&1 | tee -a ${log_file}
 }

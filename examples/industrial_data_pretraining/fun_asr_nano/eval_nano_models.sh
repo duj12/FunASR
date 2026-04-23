@@ -32,6 +32,10 @@ FUNASR_NANO_DIR="/data/megastore/Projects/DuJing/code/FunASR-main/examples/indus
 # 训练产出目录：内含 model.pt、model.pt.ep* 等
 ASR_MODEL_DIR="${FUNASR_NANO_DIR}/exp_nano_ft"
 
+# LoRA 参数（与 finetune.sh 中一致，留空则不启用 LoRA 合并）
+LORA_RANK=8
+LORA_ALPHA=16
+
 MERGE_SCRIPT="${FUNASR_NANO_DIR}/merge_ckpt_with_base.py"
 EXPORT_SCRIPT="${FUNASR_NANO_DIR}/export_nano_llm_for_vllm.py"
 
@@ -225,10 +229,15 @@ for MODEL_PT in "${MODEL_PTS[@]}"; do
     # ---- 1) 合并 ckpt -> ASR_MODEL_OUTPUT/model.pt ----
     log "[1/5] merge_ckpt_with_base: ${MODEL_NAME} -> ${ASR_MODEL_OUTPUT}/model.pt"
     set +e
-    MERGED=$(python "$MERGE_SCRIPT" \
-        --base_model_dir "$MERGE_BASE_DIR" \
-        --finetuned_ckpt "$MODEL_PT" \
-        --output_ckpt "${ASR_MODEL_OUTPUT}/model.pt" 2>/dev/null)
+    # 构建 merge 命令（如果设置了 LoRA 参数则追加 --lora_rank / --lora_alpha）
+    MERGE_CMD="python \"$MERGE_SCRIPT\" \
+        --base_model_dir \"$MERGE_BASE_DIR\" \
+        --finetuned_ckpt \"$MODEL_PT\" \
+        --output_ckpt \"${ASR_MODEL_OUTPUT}/model.pt\""
+    if [ -n "$LORA_RANK" ] && [ -n "$LORA_ALPHA" ]; then
+        MERGE_CMD="$MERGE_CMD --lora_rank ${LORA_RANK} --lora_alpha ${LORA_ALPHA}"
+    fi
+    MERGED=$(eval $MERGE_CMD 2>/dev/null)
     MERGE_EC=$?
     set -e
     if [ "$MERGE_EC" -ne 0 ] || [ -z "$MERGED" ]; then

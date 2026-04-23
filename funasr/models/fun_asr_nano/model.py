@@ -9,7 +9,6 @@ from typing import Union
 
 import torch
 import torch.nn as nn
-
 from funasr.metrics.compute_acc import compute_accuracy
 from funasr.register import tables
 from funasr.train_utils.device_funcs import force_gatherable, to_device
@@ -82,6 +81,30 @@ class FunASRNano(nn.Module):
             for _, param in model.named_parameters():
                 param.requires_grad = False
             model.eval()
+
+        # LoRA via PEFT
+        if llm_conf.get("use_lora", False):
+            from omegaconf import DictConfig, OmegaConf
+
+            lora_conf = llm_conf.get("lora_conf", {})
+            if isinstance(lora_conf, (OmegaConf, DictConfig)):
+                lora_conf = OmegaConf.to_container(lora_conf, resolve=True)
+
+            from peft import LoraConfig, PeftModel, get_peft_model
+
+            lora_init_param_path = lora_conf.get("init_param_path", None)
+            if lora_init_param_path is not None:
+                logging.info(f"lora_init_param_path: {lora_init_param_path}")
+                model = PeftModel.from_pretrained(model, lora_init_param_path)
+                if not lora_conf.get("freeze_lora", False):
+                    for name, param in model.named_parameters():
+                        if "lora_" in name:
+                            param.requires_grad = True
+            else:
+                peft_config = LoraConfig(**lora_conf)
+                model = get_peft_model(model, peft_config)
+            model.print_trainable_parameters()
+
         if llm_conf.get("activation_checkpoint", False):
             model.gradient_checkpointing_enable()
 
