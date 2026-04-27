@@ -83,6 +83,28 @@ class FunASRNano(nn.Module):
             for _, param in model.named_parameters():
                 param.requires_grad = False
             model.eval()
+
+        # LoRA: 延迟初始化，等预训练权重加载后再应用
+        # 原因：PEFT 会改变 LLM state_dict 的 key 路径，导致 load_pretrained_model 无法匹配
+        self._lora_pending_conf = None
+        if llm_conf.get("use_lora", False):
+            from omegaconf import DictConfig, OmegaConf
+
+            lora_conf = llm_conf.get("lora_conf", {})
+            if isinstance(lora_conf, (OmegaConf, DictConfig)):
+                lora_conf = OmegaConf.to_container(lora_conf, resolve=True)
+
+            lora_init_param_path = lora_conf.get("init_param_path", None) or None
+            freeze_lora = lora_conf.get("freeze_lora", False)
+            _lora_extra_keys = {"init_param_path", "freeze_lora"}
+            lora_conf_peft = {k: v for k, v in lora_conf.items() if k not in _lora_extra_keys}
+
+            self._lora_pending_conf = {
+                "lora_conf_peft": lora_conf_peft,
+                "lora_init_param_path": lora_init_param_path,
+                "freeze_lora": freeze_lora,
+            }
+
         if llm_conf.get("activation_checkpoint", False):
             model.gradient_checkpointing_enable()
 
@@ -158,6 +180,45 @@ class FunASRNano(nn.Module):
         self.length_normalized_loss = length_normalized_loss
         rank = int(os.environ.get("RANK", 0))
         logging.info(f"rank: {rank}, model is builded.")
+
+    def _apply_pending_lora(self):
+        """在预训练权重加载后应用 LoRA（由 AutoModel.build_model 调用）。
+
+        必须延迟到 load_pretrained_model 之后，因为 PEFT 会改变 LLM 的
+        state_dict key 路径，导致权重加载时 key 不匹配。
+        """
+        if self._lora_pending_conf is None:
+            return
+        conf = self._lora_pending_conf
+        self._lora_pending_conf = None
+
+        from peft import LoraConfig, PeftModel, get_peft_model
+
+        lora_init_param_path = conf["lora_init_param_path"]
+        freeze_lora = conf["freeze_lora"]
+        lora_conf_peft = conf["lora_conf_peft"]
+
+        if lora_init_param_path is not None:
+            logging.info(f"lora_init_param_path: {lora_init_param_path}")
+            self.llm = PeftModel.from_pretrained(self.llm, lora_init_param_path)
+            if not freeze_lora:
+                for name, param in self.llm.named_parameters():
+                    if "lora_" in name:
+                        param.requires_grad = True
+        else:
+            peft_config = LoraConfig(**lora_conf_peft)
+            logging.info(f"LoRA config: rank={peft_config.r}, alpha={peft_config.lora_alpha}, "
+                         f"target_modules={peft_config.target_modules}, dropout={peft_config.lora_dropout}")
+            self.llm = get_peft_model(self.llm, peft_config)
+
+        # 统计并打印 LLM 各类参数量
+        total_params = sum(p.numel() for p in self.llm.parameters())
+        trainable_params = sum(p.numel() for p in self.llm.parameters() if p.requires_grad)
+        lora_params = sum(p.numel() for n, p in self.llm.named_parameters() if "lora_" in n)
+        lora_trainable = sum(p.numel() for n, p in self.llm.named_parameters() if "lora_" in n and p.requires_grad)
+        logging.info(f"LLM LoRA 参数统计: total={total_params:,}, trainable={trainable_params:,}, "
+                     f"lora_params={lora_params:,}, lora_trainable={lora_trainable:,}, "
+                     f"trainable%={100*trainable_params/total_params:.4f}%")
 
     def forward(
         self,

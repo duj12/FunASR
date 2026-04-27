@@ -30,7 +30,7 @@ VLLM_MODEL_OUTPUT="${ASR_SERVER_DIR}/checkpoints/yuekai/Fun-ASR-Nano-2512-vllm"
 # FunASR 仓库内脚本（本地 D: 盘对应替换前缀即可）
 FUNASR_NANO_DIR="/data/megastore/Projects/DuJing/code/FunASR-main/examples/industrial_data_pretraining/fun_asr_nano"
 # 训练产出目录：内含 model.pt、model.pt.ep* 等
-ASR_MODEL_DIR="${FUNASR_NANO_DIR}/exp_nano_ft"
+ASR_MODEL_DIR="${FUNASR_NANO_DIR}/exp_nano_ft_ada+enc+lora"
 
 # LoRA 参数（与 finetune.sh 中一致，留空则不启用 LoRA 合并）
 LORA_RANK=8
@@ -237,8 +237,15 @@ for MODEL_PT in "${MODEL_PTS[@]}"; do
     if [ -n "$LORA_RANK" ] && [ -n "$LORA_ALPHA" ]; then
         MERGE_CMD="$MERGE_CMD --lora_rank ${LORA_RANK} --lora_alpha ${LORA_ALPHA}"
     fi
-    MERGED=$(eval $MERGE_CMD 2>/dev/null)
+    log "merge 命令: $MERGE_CMD"
+    MERGE_LOG="/tmp/merge_ckpt_${MODEL_NAME}.log"
+    MERGED=$(eval $MERGE_CMD 2>"$MERGE_LOG")
     MERGE_EC=$?
+    # 输出 merge 诊断日志（LoRA 合并信息等）
+    if [ -f "$MERGE_LOG" ] && [ -s "$MERGE_LOG" ]; then
+        log "merge 日志:"
+        while IFS= read -r line; do log "  $line"; done < "$MERGE_LOG"
+    fi
     set -e
     if [ "$MERGE_EC" -ne 0 ] || [ -z "$MERGED" ]; then
         log "ERROR: merge 失败 (exit $MERGE_EC): ${MODEL_NAME}"

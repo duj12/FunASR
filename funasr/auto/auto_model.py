@@ -300,6 +300,10 @@ class AutoModel:
             else:
                 print(f"error, init_param does not exist!: {init_param}")
 
+        # LoRA: 权重加载后再应用，确保预训练 LLM 权重已正确加载
+        if hasattr(model, "_lora_pending_conf") and model._lora_pending_conf is not None:
+            model._apply_pending_lora()
+
         # fp16
         if kwargs.get("fp16", False):
             model.to(torch.float16)

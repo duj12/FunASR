@@ -237,7 +237,7 @@ def main():
     ft_sd = _strip_module_prefix(ft_sd)
 
     has_lora = _has_lora_keys(ft_sd)
-
+    print(f"has LoRA: {has_lora}")
     if has_lora:
         if args.lora_rank is None or args.lora_alpha is None:
             print("错误: 检测到 LoRA 权重，但未提供 --lora_rank 和 --lora_alpha 参数", file=sys.stderr)
