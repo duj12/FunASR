@@ -42,6 +42,8 @@ echo $DISTRIBUTED_ARGS
 # whether to enable denoise preprocessing (true/false)
 enable_denoise=true
 denoise_prob=0.5
+# GPU for denoise: auto=one per training GPU via LOCAL_RANK, or set specific id (e.g. 0)
+denoise_gpu=auto
 
 # funasr trainer path
 train_tool=`which funasr-train-ds`
@@ -50,43 +52,17 @@ echo "Using funasr trainer: ${train_tool}"
 
 # denoise args
 if [ "$enable_denoise" = true ]; then
-    denoise_args="++dataset_conf.preprocessor_speech=SpeechPreprocessDenoise \
-                  ++dataset_conf.preprocessor_speech_conf.denoise_prob=${denoise_prob}"
+    if [ "$denoise_gpu" = "auto" ]; then
+        denoise_args="++dataset_conf.preprocessor_speech=SpeechPreprocessDenoise \
+                      ++dataset_conf.preprocessor_speech_conf.denoise_prob=${denoise_prob}"
+    else
+        denoise_args="++dataset_conf.preprocessor_speech=SpeechPreprocessDenoise \
+                      ++dataset_conf.preprocessor_speech_conf.denoise_prob=${denoise_prob} \
+                      ++dataset_conf.preprocessor_speech_conf.denoise_gpu=${denoise_gpu}"
+    fi
 else
     denoise_args=""
 fi
-
-run_command0() {
-    torchrun $DISTRIBUTED_ARGS \
-    ${train_tool} \
-    ++model="${model_name_or_model_dir}" \
-    # ++trust_remote_code=true \
-    ++train_data_set_list="${train_data}" \
-    ++valid_data_set_list="${val_data}" \
-    ++dataset_conf.data_split_num=1 \
-    ++dataset_conf.batch_sampler="BatchSampler" \
-    ++dataset_conf.batch_size=6000  \
-    ++dataset_conf.sort_size=1024 \
-    ++dataset_conf.batch_type="token" \
-    ++dataset_conf.num_workers=4 \
-    ++train_conf.max_epoch=50 \
-    ++train_conf.log_interval=1 \
-    ++train_conf.resume=true \
-    ++train_conf.validate_interval=2000 \
-    ++train_conf.save_checkpoint_interval=2000 \
-    ++train_conf.effective_save_name_excludes="None" \
-    ++train_conf.keep_nbest_models=20 \
-    ++train_conf.avg_nbest_model=10 \
-    ++train_conf.use_deepspeed=false \
-    ++train_conf.deepspeed_config=${deepspeed_config} \
-    ++train_conf.find_unused_parameters=true \
-    ++optim_conf.lr=0.0002 \
-    ++audio_encoder_conf.freeze=true \
-    ++audio_adaptor_conf.freeze=true \
-    ++llm_conf.freeze=false \
-    ${denoise_args} \
-    ++output_dir="${output_dir}" &> ${log_file}
-}
 
 
 run_command() {
@@ -97,10 +73,10 @@ run_command() {
             ++train_data_set_list="${train_data}" \
             ++valid_data_set_list="${val_data}" \
             ++dataset_conf.batch_sampler="BatchSampler" \
-            ++dataset_conf.batch_size=40000  \
+            ++dataset_conf.batch_size=20000  \
             ++dataset_conf.sort_size=1024 \
             ++dataset_conf.batch_type="token" \
-            ++dataset_conf.num_workers=4 \
+            ++dataset_conf.num_workers=1 \
             ++dataset_conf.max_source_length=4000 \
             ++dataset_conf.min_source_length=20 \
             ++dataset_conf.max_target_length=100 \

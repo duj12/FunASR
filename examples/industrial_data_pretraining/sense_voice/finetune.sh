@@ -53,6 +53,8 @@ echo $DISTRIBUTED_ARGS
 # whether to enable denoise preprocessing (true/false)
 enable_denoise=true
 denoise_prob=0.5
+# GPU for denoise: auto=one per training GPU via LOCAL_RANK, or set specific id (e.g. 0)
+denoise_gpu=auto
 
 # funasr trainer path
 # batch_size=32000 for A100 80G, batch_size=16000 for 3090 24G
@@ -65,8 +67,14 @@ train_tool=../../../funasr/bin/train_ds.py
 
 # denoise args
 if [ "$enable_denoise" = true ]; then
-    denoise_args="++dataset_conf.preprocessor_speech=SpeechPreprocessDenoise \
-                  ++dataset_conf.preprocessor_speech_conf.denoise_prob=${denoise_prob}"
+    if [ "$denoise_gpu" = "auto" ]; then
+        denoise_args="++dataset_conf.preprocessor_speech=SpeechPreprocessDenoise \
+                      ++dataset_conf.preprocessor_speech_conf.denoise_prob=${denoise_prob}"
+    else
+        denoise_args="++dataset_conf.preprocessor_speech=SpeechPreprocessDenoise \
+                      ++dataset_conf.preprocessor_speech_conf.denoise_prob=${denoise_prob} \
+                      ++dataset_conf.preprocessor_speech_conf.denoise_gpu=${denoise_gpu}"
+    fi
 else
     denoise_args=""
 fi
@@ -78,10 +86,10 @@ run_command() {
             ++train_data_set_list="${train_data}" \
             ++valid_data_set_list="${val_data}" \
             ++dataset_conf.batch_sampler="BatchSampler" \
-            ++dataset_conf.batch_size=40000  \
+            ++dataset_conf.batch_size=20000  \
             ++dataset_conf.sort_size=1024 \
             ++dataset_conf.batch_type="token" \
-            ++dataset_conf.num_workers=4 \
+            ++dataset_conf.num_workers=1 \
             ++dataset_conf.max_source_length=4000 \
             ++dataset_conf.min_source_length=20 \
             ++dataset_conf.max_target_length=100 \

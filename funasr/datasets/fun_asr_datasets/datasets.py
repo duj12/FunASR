@@ -224,6 +224,8 @@ class FunASR(torch.utils.data.Dataset):
                         if sub_str.startswith("!"):
                             try:
                                 data_src = load_audio_text_image_video(sub_str[1:], fs=self.fs)
+                                if self.preprocessor_speech is not None:
+                                    data_src = self.preprocessor_speech(data_src, fs=self.fs, source=sub_str[1:])
                                 if self.preprocessor_noise is not None and not is_noised:
                                     try:
                                         data_src = self.preprocessor_noise(data_src.numpy())

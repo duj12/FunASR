@@ -2,6 +2,7 @@ import os
 import json
 import torch
 import logging
+import threading
 import concurrent.futures
 import librosa, soundfile
 import numpy as np
@@ -15,6 +16,7 @@ import random
 import re
 from funasr.tokenizer.cleaner import TextCleaner
 from funasr.register import tables
+from funasr.utils.load_utils import load_audio_text_image_video
  
 
 @tables.register("preprocessor_classes", "SpeechPreprocessSpeedPerturb")
@@ -137,77 +139,120 @@ class SpeechPreprocessAddNoiseReverb(nn.Module):
 
 @tables.register("preprocessor_classes", "SpeechPreprocessDenoise")
 class SpeechPreprocessDenoise(nn.Module):
+    _init_lock = threading.Lock()
 
-    def __init__(self, denoise_prob: float = 0.5, ans_model: str = "iic/speech_zipenhancer_ans_multiloss_16k_base",
-                 onnx_providers: list = None, **kwargs):
+    def __init__(self, denoise_prob: float = 0.5,
+                 ans_model: str = "iic/speech_zipenhancer_ans_multiloss_16k_base",
+                 denoise_gpu: int = None, **kwargs):
         super().__init__()
         self.denoise_prob = denoise_prob
-        import onnxruntime
-        from modelscope.utils.file_utils import get_modelscope_cache_dir
-
-        cache_dir = get_modelscope_cache_dir()
-        onnx_path = os.path.join(cache_dir, f"hub/{ans_model}/onnx_model.onnx")
-        if not os.path.exists(onnx_path):
-            from modelscope.pipelines import pipeline
-            from modelscope.utils.constant import Tasks
-            os.makedirs(os.path.dirname(onnx_path), exist_ok=True)
-            pipeline(Tasks.acoustic_noise_suppression, model=ans_model)
-
-        providers = onnx_providers or ["CPUExecutionProvider"]
-        self.onnx_session = onnxruntime.InferenceSession(onnx_path, providers=providers)
-        from modelscope.models.audio.ans.zipenhancer import mag_pha_stft, mag_pha_istft
-        self.mag_pha_stft = mag_pha_stft
-        self.mag_pha_istft = mag_pha_istft
+        self.ans_model = ans_model
+        self.denoise_gpu = denoise_gpu
+        self._ans_pipeline = None
         self._denoise_count = 0
         self._skip_count = 0
-        logging.info(f"SpeechPreprocessDenoise loaded: ans_model={ans_model}, onnx_path={onnx_path}, "
-                     f"denoise_prob={denoise_prob}, providers={providers}") 
+        logging.info(f"SpeechPreprocessDenoise configured: ans_model={ans_model}, "
+                     f"denoise_prob={denoise_prob}, denoise_gpu={denoise_gpu}")
 
-    def _denoise(self, wav_np, fs):
-        from modelscope.utils.audio.audio_utils import audio_norm
-        wav = audio_norm(wav_np).astype(np.float32)
-        noisy_wav = torch.from_numpy(np.reshape(wav, [1, wav.shape[0]]))
-        n_fft, hop_size, win_size = 400, 100, 400
+    def _ensure_pipeline(self):
+        if self._ans_pipeline is not None:
+            return
+        with self._init_lock:
+            if self._ans_pipeline is not None:
+                return
+            from modelscope.pipelines import pipeline
+            from modelscope.utils.constant import Tasks
+            if self.denoise_gpu is not None and self.denoise_gpu >= 0:
+                device = f"cuda:{self.denoise_gpu}"
+            else:
+                local_rank = int(os.environ.get("LOCAL_RANK", 0))
+                device = f"cuda:{local_rank}"
+            self._ans_pipeline = pipeline(
+                Tasks.acoustic_noise_suppression,
+                model=self.ans_model,
+                device=device)
+            logging.info(f"SpeechPreprocessDenoise pipeline loaded on device={device}, local_rank={local_rank}")
 
-        norm_factor = torch.sqrt(noisy_wav.shape[1] / torch.sum(noisy_wav ** 2.0))
-        noisy_audio = noisy_wav * norm_factor
-        noisy_amp, noisy_pha, _ = self.mag_pha_stft(
-            noisy_audio, n_fft, hop_size, win_size, compress_factor=0.3, center=True)
+    def _to_numpy_audio(self, data):
+        if isinstance(data, np.ndarray):
+            return data.astype(np.float32)
+        if isinstance(data, bytes):
+            pcm = np.frombuffer(data, dtype=np.int16)
+            return pcm.astype(np.float32) / 32768.0
+        if isinstance(data, str):
+            wav, _ = soundfile.read(data)
+            return wav.astype(np.float32)
+        raise ValueError(f"Cannot convert {type(data)} to numpy audio")
 
-        def to_numpy(t):
-            return t.detach().cpu().numpy() if t.requires_grad else t.cpu().numpy()
+    def _extract_result(self, result):
+        if isinstance(result, dict):
+            for key in ('output_pcm', 'output', 'wav'):
+                if key in result:
+                    return self._to_numpy_audio(result[key])
+            for v in result.values():
+                if isinstance(v, (np.ndarray, bytes)):
+                    return self._to_numpy_audio(v)
+            raise ValueError(f"Cannot find audio in pipeline result: {list(result.keys())}")
+        if isinstance(result, (np.ndarray, bytes)):
+            return self._to_numpy_audio(result)
+        if isinstance(result, (list, tuple)) and len(result) > 0:
+            item = result[0]
+            if isinstance(item, dict):
+                for key in ('output_pcm', 'output', 'wav'):
+                    if key in item:
+                        return self._to_numpy_audio(item[key])
+            return self._to_numpy_audio(item)
+        raise ValueError(f"Unexpected pipeline result type: {type(result)}")
 
-        ort_inputs = {
-            self.onnx_session.get_inputs()[0].name: to_numpy(noisy_amp),
-            self.onnx_session.get_inputs()[1].name: to_numpy(noisy_pha),
-        }
-        ort_outs = self.onnx_session.run(None, ort_inputs)
-
-        amp_g = torch.from_numpy(ort_outs[0])
-        pha_g = torch.from_numpy(ort_outs[1])
-        enhanced = self.mag_pha_istft(
-            amp_g, pha_g, n_fft, hop_size, win_size, compress_factor=0.3, center=True)
-        enhanced = enhanced / norm_factor
-        return to_numpy(enhanced[0])
-
-    def forward(self, audio, fs, **kwargs):
-        if self.denoise_prob <= 0 or random.random() >= self.denoise_prob:
+    def forward(self, audio, fs, source=None, **kwargs):
+        do_denoise = self.denoise_prob > 0 and random.random() < self.denoise_prob
+        if not do_denoise:
             self._skip_count += 1
             if self._skip_count % 1000 == 0:
                 logging.info(f"SpeechPreprocessDenoise stats: denoised={self._denoise_count}, skipped={self._skip_count}")
-            return audio
-        audio_np = audio.numpy() if isinstance(audio, torch.Tensor) else np.array(audio)
+            if audio is not None:
+                return audio
+            if source is not None:
+                return load_audio_text_image_video(source, fs=fs)
+            raise ValueError("Either audio or source must be provided")
+
         try:
-            enhanced = self._denoise(audio_np, fs)
+            self._ensure_pipeline()
+            if source is not None:
+                result = self._ans_pipeline(source)
+            else:
+                import tempfile
+                if not hasattr(self, '_tmp_wav') or self._tmp_wav is None:
+                    fd, self._tmp_wav = tempfile.mkstemp(suffix='.wav')
+                    os.close(fd)
+                audio_np = audio.numpy() if isinstance(audio, torch.Tensor) else np.array(audio)
+                soundfile.write(self._tmp_wav, audio_np.astype(np.float32), fs)
+                result = self._ans_pipeline(self._tmp_wav)
+
+            enhanced = self._extract_result(result)
             self._denoise_count += 1
             if self._denoise_count == 1:
-                logging.info(f"SpeechPreprocessDenoise: first audio denoised successfully, shape={enhanced.shape}")
+                debug_dir = os.path.dirname(os.path.abspath(__file__))
+                orig_path = os.path.join(debug_dir, "debug_denoise_orig.wav")
+                enh_path = os.path.join(debug_dir, "debug_denoise_enhanced.wav")
+                if source is not None:
+                    orig_wav, orig_sr = soundfile.read(source)
+                    soundfile.write(orig_path, orig_wav, orig_sr)
+                elif audio is not None:
+                    audio_np = audio.numpy() if isinstance(audio, torch.Tensor) else np.array(audio)
+                    soundfile.write(orig_path, audio_np.astype(np.float32), fs)
+                soundfile.write(enh_path, enhanced, fs)
+                logging.info(f"SpeechPreprocessDenoise: debug audio saved to {orig_path} and {enh_path}, shape={enhanced.shape}")
             if self._denoise_count % 1000 == 0:
                 logging.info(f"SpeechPreprocessDenoise stats: denoised={self._denoise_count}, skipped={self._skip_count}")
             return torch.from_numpy(enhanced.astype(np.float32))
         except Exception as e:
             logging.warning(f"Denoise failed, using original audio: {e}")
-            return audio if isinstance(audio, torch.Tensor) else torch.from_numpy(audio)
+            if audio is not None:
+                return audio
+            if source is not None:
+                return load_audio_text_image_video(source, fs=fs)
+            raise
 
 
 @tables.register("preprocessor_classes", "TextPreprocessSegDict")
