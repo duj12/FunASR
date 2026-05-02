@@ -15,7 +15,7 @@ import random
 import re
 from funasr.tokenizer.cleaner import TextCleaner
 from funasr.register import tables
-
+ 
 
 @tables.register("preprocessor_classes", "SpeechPreprocessSpeedPerturb")
 class SpeechPreprocessSpeedPerturb(nn.Module):
@@ -133,6 +133,81 @@ class SpeechPreprocessAddNoiseReverb(nn.Module):
             soundfile.write("./debug_noise.wav", audio, fs)
 
         return torch.from_numpy(audio)
+
+
+@tables.register("preprocessor_classes", "SpeechPreprocessDenoise")
+class SpeechPreprocessDenoise(nn.Module):
+
+    def __init__(self, denoise_prob: float = 0.5, ans_model: str = "iic/speech_zipenhancer_ans_multiloss_16k_base",
+                 onnx_providers: list = None, **kwargs):
+        super().__init__()
+        self.denoise_prob = denoise_prob
+        import onnxruntime
+        from modelscope.utils.file_utils import get_modelscope_cache_dir
+
+        cache_dir = get_modelscope_cache_dir()
+        onnx_path = os.path.join(cache_dir, f"hub/{ans_model}/onnx_model.onnx")
+        if not os.path.exists(onnx_path):
+            from modelscope.pipelines import pipeline
+            from modelscope.utils.constant import Tasks
+            os.makedirs(os.path.dirname(onnx_path), exist_ok=True)
+            pipeline(Tasks.acoustic_noise_suppression, model=ans_model)
+
+        providers = onnx_providers or ["CPUExecutionProvider"]
+        self.onnx_session = onnxruntime.InferenceSession(onnx_path, providers=providers)
+        from modelscope.models.audio.ans.zipenhancer import mag_pha_stft, mag_pha_istft
+        self.mag_pha_stft = mag_pha_stft
+        self.mag_pha_istft = mag_pha_istft
+        self._denoise_count = 0
+        self._skip_count = 0
+        logging.info(f"SpeechPreprocessDenoise loaded: ans_model={ans_model}, onnx_path={onnx_path}, "
+                     f"denoise_prob={denoise_prob}, providers={providers}") 
+
+    def _denoise(self, wav_np, fs):
+        from modelscope.utils.audio.audio_utils import audio_norm
+        wav = audio_norm(wav_np).astype(np.float32)
+        noisy_wav = torch.from_numpy(np.reshape(wav, [1, wav.shape[0]]))
+        n_fft, hop_size, win_size = 400, 100, 400
+
+        norm_factor = torch.sqrt(noisy_wav.shape[1] / torch.sum(noisy_wav ** 2.0))
+        noisy_audio = noisy_wav * norm_factor
+        noisy_amp, noisy_pha, _ = self.mag_pha_stft(
+            noisy_audio, n_fft, hop_size, win_size, compress_factor=0.3, center=True)
+
+        def to_numpy(t):
+            return t.detach().cpu().numpy() if t.requires_grad else t.cpu().numpy()
+
+        ort_inputs = {
+            self.onnx_session.get_inputs()[0].name: to_numpy(noisy_amp),
+            self.onnx_session.get_inputs()[1].name: to_numpy(noisy_pha),
+        }
+        ort_outs = self.onnx_session.run(None, ort_inputs)
+
+        amp_g = torch.from_numpy(ort_outs[0])
+        pha_g = torch.from_numpy(ort_outs[1])
+        enhanced = self.mag_pha_istft(
+            amp_g, pha_g, n_fft, hop_size, win_size, compress_factor=0.3, center=True)
+        enhanced = enhanced / norm_factor
+        return to_numpy(enhanced[0])
+
+    def forward(self, audio, fs, **kwargs):
+        if self.denoise_prob <= 0 or random.random() >= self.denoise_prob:
+            self._skip_count += 1
+            if self._skip_count % 1000 == 0:
+                logging.info(f"SpeechPreprocessDenoise stats: denoised={self._denoise_count}, skipped={self._skip_count}")
+            return audio
+        audio_np = audio.numpy() if isinstance(audio, torch.Tensor) else np.array(audio)
+        try:
+            enhanced = self._denoise(audio_np, fs)
+            self._denoise_count += 1
+            if self._denoise_count == 1:
+                logging.info(f"SpeechPreprocessDenoise: first audio denoised successfully, shape={enhanced.shape}")
+            if self._denoise_count % 1000 == 0:
+                logging.info(f"SpeechPreprocessDenoise stats: denoised={self._denoise_count}, skipped={self._skip_count}")
+            return torch.from_numpy(enhanced.astype(np.float32))
+        except Exception as e:
+            logging.warning(f"Denoise failed, using original audio: {e}")
+            return audio if isinstance(audio, torch.Tensor) else torch.from_numpy(audio)
 
 
 @tables.register("preprocessor_classes", "TextPreprocessSegDict")

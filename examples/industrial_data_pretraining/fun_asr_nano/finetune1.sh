@@ -4,7 +4,7 @@
 workspace=`pwd`
 
 # which gpu to train or finetune
-export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
+export CUDA_VISIBLE_DEVICES="0,1,2,3"
 gpu_num=$(echo $CUDA_VISIBLE_DEVICES | awk -F "," '{print NF}')
 
 # model_name from model_hub, or model_dir in local path
@@ -18,7 +18,7 @@ train_data=/data/megastore/Datasets/ASR/jsonl/FunASR_Nano/finetune.list
 val_data=/data/megastore/Datasets/ASR/jsonl/FunASR_Nano/test.list
 
 # exp output dir
-output_dir="./exp_nano_ft_lora"
+output_dir="./exp_ft_se"
 log_file="${output_dir}/log.txt"
 
 deepspeed_config=${workspace}/deepspeed_conf/ds_stage1.json
@@ -31,21 +31,63 @@ DISTRIBUTED_ARGS="
     --nproc_per_node $gpu_num \
     --node_rank ${RANK:-0} \
     --master_addr ${MASTER_ADDR:-127.0.0.1} \
-    --master_port ${MASTER_PORT:-26669}
+    --master_port ${MASTER_PORT:-26668}
 "
 echo $DISTRIBUTED_ARGS
+
+            # ++dataset_conf.preprocessor_speech=SpeechPreprocessAddNoiseReverb  \
+            # ++dataset_conf.preprocessor_speech_conf.reverb_path=/data/megastore/Datasets/AudioData/Noise/RIRS_NOISES/rir.scp \
+            # ++dataset_conf.preprocessor_speech_conf.noise_path=/data/megastore/Datasets/AudioData/Noise/WavNoise/noise.scp \
+
+# whether to enable denoise preprocessing (true/false)
+enable_denoise=true
+denoise_prob=0.5
 
 # funasr trainer path
 train_tool=`which funasr-train-ds`
 train_tool=../../../funasr/bin/train_ds.py
 echo "Using funasr trainer: ${train_tool}"
 
-# ========== 训练配置 ==========
-# LoRA 参数 (用于 LLM 部分的低秩适配)
-lora_rank=8
-lora_alpha=16
-lora_dropout=0.05
-lora_target_modules="q_proj,k_proj,v_proj,o_proj"
+# denoise args
+if [ "$enable_denoise" = true ]; then
+    denoise_args="++dataset_conf.preprocessor_speech=SpeechPreprocessDenoise \
+                  ++dataset_conf.preprocessor_speech_conf.denoise_prob=${denoise_prob}"
+else
+    denoise_args=""
+fi
+
+run_command0() {
+    torchrun $DISTRIBUTED_ARGS \
+    ${train_tool} \
+    ++model="${model_name_or_model_dir}" \
+    # ++trust_remote_code=true \
+    ++train_data_set_list="${train_data}" \
+    ++valid_data_set_list="${val_data}" \
+    ++dataset_conf.data_split_num=1 \
+    ++dataset_conf.batch_sampler="BatchSampler" \
+    ++dataset_conf.batch_size=6000  \
+    ++dataset_conf.sort_size=1024 \
+    ++dataset_conf.batch_type="token" \
+    ++dataset_conf.num_workers=4 \
+    ++train_conf.max_epoch=50 \
+    ++train_conf.log_interval=1 \
+    ++train_conf.resume=true \
+    ++train_conf.validate_interval=2000 \
+    ++train_conf.save_checkpoint_interval=2000 \
+    ++train_conf.effective_save_name_excludes="None" \
+    ++train_conf.keep_nbest_models=20 \
+    ++train_conf.avg_nbest_model=10 \
+    ++train_conf.use_deepspeed=false \
+    ++train_conf.deepspeed_config=${deepspeed_config} \
+    ++train_conf.find_unused_parameters=true \
+    ++optim_conf.lr=0.0002 \
+    ++audio_encoder_conf.freeze=true \
+    ++audio_adaptor_conf.freeze=true \
+    ++llm_conf.freeze=false \
+    ${denoise_args} \
+    ++output_dir="${output_dir}" &> ${log_file}
+}
+
 
 run_command() {
     torchrun $DISTRIBUTED_ARGS \
@@ -65,7 +107,7 @@ run_command() {
             ++dataset_conf.min_target_length=1 \
             ++dataset_conf.max_token_length=4100 \
             ++dataset_conf.data_split_num=1 \
-            ++train_conf.max_epoch=45 \
+            ++train_conf.max_epoch=60 \
             ++train_conf.log_interval=100 \
             ++train_conf.resume=true \
             ++train_conf.validate_interval=5000 \
@@ -79,15 +121,8 @@ run_command() {
             ++audio_encoder_conf.freeze=false \
             ++audio_adaptor_conf.freeze=false \
             ++llm_conf.freeze=true \
-            ++train_conf.effective_save_name_excludes="None" \
-            ++llm_conf.use_lora=true \
-            ++llm_conf.lora_conf.r=${lora_rank} \
-            ++llm_conf.lora_conf.lora_alpha=${lora_alpha} \
-            ++llm_conf.lora_conf.lora_dropout=${lora_dropout} \
-            ++llm_conf.lora_conf.target_modules="[${lora_target_modules}]" \
-            ++llm_conf.lora_conf.bias=none \
-            ++llm_conf.lora_conf.task_type=CAUSAL_LM \
             ++optim_conf.lr=0.0002 \
+            ${denoise_args} \
             ++output_dir="${output_dir}" #  2>&1 | tee -a ${log_file}
 }
 

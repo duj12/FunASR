@@ -32,7 +32,7 @@ train_data=/data/megastore/Datasets/ASR/jsonl/SenseVoice/finetune.list
 val_data=/data/megastore/Datasets/ASR/jsonl/SenseVoice/test.list
 
 # exp output dir
-output_dir="./exp_svsnsy_ft"
+output_dir="./exp_ft_se"
 log_file="${output_dir}/log.txt"
 
 deepspeed_config=${workspace}/../../deepspeed_conf/ds_stage1.json
@@ -45,12 +45,16 @@ DISTRIBUTED_ARGS="
     --nproc_per_node $gpu_num \
     --node_rank ${RANK:-0} \
     --master_addr ${MASTER_ADDR:-127.0.0.1} \
-    --master_port ${MASTER_PORT:-26668}
+    --master_port ${MASTER_PORT:-36668}
 "
 
 echo $DISTRIBUTED_ARGS
 
-# funasr trainer path  
+# whether to enable denoise preprocessing (true/false)
+enable_denoise=true
+denoise_prob=0.5
+
+# funasr trainer path
 # batch_size=32000 for A100 80G, batch_size=16000 for 3090 24G
 
             # ++dataset_conf.preprocessor_speech=SpeechPreprocessAddNoiseReverb  \
@@ -58,6 +62,15 @@ echo $DISTRIBUTED_ARGS
             # ++dataset_conf.preprocessor_speech_conf.noise_path=/data/megastore/Datasets/AudioData/Noise/WavNoise/noise.scp \
 
 train_tool=../../../funasr/bin/train_ds.py
+
+# denoise args
+if [ "$enable_denoise" = true ]; then
+    denoise_args="++dataset_conf.preprocessor_speech=SpeechPreprocessDenoise \
+                  ++dataset_conf.preprocessor_speech_conf.denoise_prob=${denoise_prob}"
+else
+    denoise_args=""
+fi
+
 run_command() {
     torchrun $DISTRIBUTED_ARGS \
         ${train_tool} \
@@ -78,7 +91,7 @@ run_command() {
             ++train_conf.max_epoch=60 \
             ++train_conf.log_interval=100 \
             ++train_conf.resume=true \
-            ++train_conf.validate_interval=2500 \
+            ++train_conf.validate_interval=5000 \
             ++train_conf.save_checkpoint_interval=5000 \
             ++train_conf.keep_nbest_models=100 \
             ++train_conf.avg_keep_nbest_models_type="loss" \
@@ -86,6 +99,7 @@ run_command() {
             ++train_conf.use_deepspeed=false \
             ++train_conf.deepspeed_config=${deepspeed_config} \
             ++optim_conf.lr=0.0002 \
+            ${denoise_args} \
             ++output_dir="${output_dir}" #  2>&1 | tee -a ${log_file}
 }
 
