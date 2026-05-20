@@ -123,7 +123,7 @@ class OpenAIDataset(torch.utils.data.Dataset):
                             try:
                                 data_src = load_audio_text_image_video(sub_str[1:], fs=self.fs)
                                 if self.preprocessor_speech is not None:
-                                    data_src = self.preprocessor_speech(data_src, fs=self.fs, source=sub_str[1:])
+                                    data_src = self.preprocessor_speech(data_src, fs=self.fs)
                             except Exception as e:
                                 logging.error(
                                     f"Loading wav failed! {str(e)}, {traceback.format_exc()}"
@@ -370,7 +370,7 @@ class OpenAIDatasetMultiTurn(torch.utils.data.Dataset):
                             try:
                                 data_src = load_audio_text_image_video(sub_str[1:], fs=self.fs)
                                 if self.preprocessor_speech is not None:
-                                    data_src = self.preprocessor_speech(data_src, fs=self.fs, source=sub_str[1:])
+                                    data_src = self.preprocessor_speech(data_src, fs=self.fs)
                             except Exception as e:
                                 logging.error(
                                     f"Loading wav failed! {str(e)}, {traceback.format_exc()}"

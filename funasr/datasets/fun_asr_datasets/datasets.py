@@ -43,7 +43,7 @@ def _stagger_by_rank(base_delay=1.0):
 
 
 @tables.register("dataset_classes", "FunASR")
-class FunASR(torch.utils.data.Dataset):
+class FunASRDataset(torch.utils.data.Dataset):
     """
     FunASR dataset
     """
@@ -167,7 +167,8 @@ class FunASR(torch.utils.data.Dataset):
             if len(user) < 1 or len(assistant) < 1:
                 logging.warning(f"item is error: {item}")
                 continue
-            input_ids, labels, fbank, fbank_lens, fbank_mask, fbank_beg, fake_token_len = (
+            input_ids, labels, fbank, fbank_lens, fbank_mask, fbank_beg, fake_token_len, sources = (
+                [],
                 [],
                 [],
                 [],
@@ -223,9 +224,11 @@ class FunASR(torch.utils.data.Dataset):
                         )
                         if sub_str.startswith("!"):
                             try:
-                                data_src = load_audio_text_image_video(sub_str[1:], fs=self.fs)
+                                audio_path = sub_str[1:]
+                                sources.append(audio_path)
+                                data_src = load_audio_text_image_video(audio_path, fs=self.fs)
                                 if self.preprocessor_speech is not None:
-                                    data_src = self.preprocessor_speech(data_src, fs=self.fs, source=sub_str[1:])
+                                    data_src = self.preprocessor_speech(data_src, fs=self.fs)
                                 if self.preprocessor_noise is not None and not is_noised:
                                     try:
                                         data_src = self.preprocessor_noise(data_src.numpy())
@@ -325,6 +328,7 @@ class FunASR(torch.utils.data.Dataset):
                 "input_ids": input_ids,
                 "attention_mask": attention_mask,
                 "labels_ids": labels,
+                "sources": sources,
             }
             output["item"] = item
             if len(fbank) > 0:

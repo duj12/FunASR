@@ -218,16 +218,23 @@ class SpeechPreprocessDenoise(nn.Module):
 
         try:
             self._ensure_pipeline()
-            if source is not None:
-                result = self._ans_pipeline(source)
-            else:
-                import tempfile
-                if not hasattr(self, '_tmp_wav') or self._tmp_wav is None:
-                    fd, self._tmp_wav = tempfile.mkstemp(suffix='.wav')
-                    os.close(fd)
-                audio_np = audio.numpy() if isinstance(audio, torch.Tensor) else np.array(audio)
-                soundfile.write(self._tmp_wav, audio_np.astype(np.float32), fs)
-                result = self._ans_pipeline(self._tmp_wav)
+            import sys
+            import io as _io
+            _prev_stdout = sys.stdout
+            sys.stdout = _io.StringIO()
+            try:
+                if source is not None:
+                    result = self._ans_pipeline(source)
+                else:
+                    import tempfile
+                    if not hasattr(self, '_tmp_wav') or self._tmp_wav is None:
+                        fd, self._tmp_wav = tempfile.mkstemp(suffix='.wav')
+                        os.close(fd)
+                    audio_np = audio.numpy() if isinstance(audio, torch.Tensor) else np.array(audio)
+                    soundfile.write(self._tmp_wav, audio_np.astype(np.float32), fs)
+                    result = self._ans_pipeline(self._tmp_wav)
+            finally:
+                sys.stdout = _prev_stdout
 
             enhanced = self._extract_result(result)
             self._denoise_count += 1

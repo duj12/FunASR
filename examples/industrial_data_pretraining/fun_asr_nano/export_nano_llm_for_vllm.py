@@ -29,6 +29,12 @@ def main():
         required=True,
         help="输出目录（tokenizer 与 causal LM 均 save_pretrained 到此）",
     )
+    p.add_argument(
+        "--bf16",
+        action="store_true",
+        default=False,
+        help="是否将 LLM 权重转换为 bf16 格式保存",
+    )
     args = p.parse_args()
 
     if not os.path.isdir(args.asr_model_dir):
@@ -61,6 +67,12 @@ def main():
         print(f"提示: Peft merge 跳过或非 Peft 模型: {e}", file=sys.stderr)
 
     tokenizer.save_pretrained(args.output_dir)
+
+    # 转换为 bf16 格式（如果指定）
+    if args.bf16:
+        import torch
+        llm = llm.to(torch.bfloat16)
+
     llm.save_pretrained(args.output_dir)
 
     out_abs = os.path.abspath(args.output_dir)

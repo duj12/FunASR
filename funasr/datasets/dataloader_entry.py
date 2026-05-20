@@ -34,15 +34,11 @@ def DataloaderMapStyle(frontend=None, tokenizer=None, **kwargs):
             dataset_val, is_training=False, **kwargs.get("dataset_conf")
         )
 
-    mp_ctx = "spawn" if kwargs.get("dataset_conf", {}).get("preprocessor_speech") is not None else None
-    dl_kwargs = {}
-    if mp_ctx:
-        dl_kwargs["multiprocessing_context"] = mp_ctx
     dataloader_tr = torch.utils.data.DataLoader(
-        dataset_tr, collate_fn=dataset_tr.collator, **batch_sampler, **dl_kwargs
+        dataset_tr, collate_fn=dataset_tr.collator, **batch_sampler
     )
     dataloader_val = torch.utils.data.DataLoader(
-        dataset_val, collate_fn=dataset_val.collator, **batch_sampler_val, **dl_kwargs
+        dataset_val, collate_fn=dataset_val.collator, **batch_sampler_val
     )
 
     return dataloader_tr, dataloader_val
@@ -111,15 +107,11 @@ class DataloaderMapStyle:
 
         batch_sampler["batch_sampler"].set_epoch(epoch)
         batch_sampler_val["batch_sampler"].set_epoch(epoch)
-        mp_ctx = "spawn" if self.kwargs.get("dataset_conf", {}).get("preprocessor_speech") is not None else None
-        dl_kwargs = {}
-        if mp_ctx:
-            dl_kwargs["multiprocessing_context"] = mp_ctx
         dataloader_tr = torch.utils.data.DataLoader(
-            self.dataset_tr, collate_fn=self.dataset_tr.collator, **batch_sampler, **dl_kwargs
+            self.dataset_tr, collate_fn=self.dataset_tr.collator, **batch_sampler
         )
         dataloader_val = torch.utils.data.DataLoader(
-            self.dataset_val, collate_fn=self.dataset_val.collator, **batch_sampler_val, **dl_kwargs
+            self.dataset_val, collate_fn=self.dataset_val.collator, **batch_sampler_val
         )
 
         return dataloader_tr, dataloader_val

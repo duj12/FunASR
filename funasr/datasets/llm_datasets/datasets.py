@@ -67,7 +67,7 @@ class AudioLLMNARDataset(torch.utils.data.Dataset):
         source = item["source"]
         data_src = load_audio_text_image_video(source, fs=self.fs)
         if self.preprocessor_speech:
-            data_src = self.preprocessor_speech(data_src, fs=self.fs, source=source)
+            data_src = self.preprocessor_speech(data_src, fs=self.fs)
         speech, speech_lengths = extract_fbank(
             data_src, data_type=self.data_type, frontend=self.frontend, is_final=True
         )  # speech: [b, T, d]
@@ -228,7 +228,7 @@ class AudioLLMDataset(torch.utils.data.Dataset):
         source = item["source"]
         data_src = load_audio_text_image_video(source, fs=self.fs)
         if self.preprocessor_speech:
-            data_src = self.preprocessor_speech(data_src, fs=self.fs, source=source)
+            data_src = self.preprocessor_speech(data_src, fs=self.fs)
         speech, speech_lengths = extract_fbank(
             data_src, data_type=self.data_type, frontend=self.frontend, is_final=True
         )  # speech: [b, T, d]
@@ -363,7 +363,7 @@ class AudioLLMARDataset(torch.utils.data.Dataset):
         source = item["source"]
         data_src = load_audio_text_image_video(source, fs=self.fs)
         if self.preprocessor_speech:
-            data_src = self.preprocessor_speech(data_src, fs=self.fs, source=source)
+            data_src = self.preprocessor_speech(data_src, fs=self.fs)
         speech, speech_lengths = extract_fbank(
             data_src, data_type=self.data_type, frontend=self.frontend, is_final=True
         )  # speech: [b, T, d]

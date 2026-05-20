@@ -227,6 +227,16 @@ class Trainer:
         self.start_data_split_i = 0
         self.start_step = 0
         self.step_in_epoch = 0
+
+        # Denoise module (GPU, runs in main training process)
+        self.denoise_module = None
+        denoise_conf = kwargs.get("denoise_conf", None)
+        if denoise_conf and denoise_conf.get("enabled", False):
+            from funasr.train_utils.denoise_module import DenoiseModule
+            self.denoise_module = DenoiseModule(
+                denoise_prob=denoise_conf.get("denoise_prob", 0.5),
+                ans_model=denoise_conf.get("ans_model", "iic/speech_zipenhancer_ans_multiloss_16k_base"),
+            )
         self.use_wandb = kwargs.get("use_wandb", False)
         if self.use_wandb:
             wandb.login(key=kwargs.get("wandb_token"))
@@ -664,6 +674,16 @@ class Trainer:
             loss_dict["speed_stats"]["data_load"] = f"{time1-time_beg:0.3f}"
 
             batch = to_device(batch, self.device)
+
+            # Denoise step: runs on GPU in main process, before model forward
+            if self.denoise_module is not None:
+                try:
+                    dataset = dataloader_train.dataset
+                    frontend = getattr(dataset, 'frontend', None)
+                    if frontend is not None:
+                        batch = self.denoise_module.denoise_batch(batch, frontend)
+                except Exception as e:
+                    logging.warning(f"Denoise step failed: {e}")
 
             my_context = nullcontext
             if self.use_ddp or self.use_fsdp:

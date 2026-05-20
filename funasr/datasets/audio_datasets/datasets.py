@@ -78,7 +78,7 @@ class AudioDataset(torch.utils.data.Dataset):
             # 尝试正常加载音频文件
             data_src = load_audio_text_image_video(source, fs=self.fs)
             if self.preprocessor_speech:
-                data_src = self.preprocessor_speech(data_src, fs=self.fs, source=source)
+                data_src = self.preprocessor_speech(data_src, fs=self.fs)
         except Exception as e:
             logging.error(f"Load audio file {source} failed: {e}\n data_src: {data_src}")
             # 音频读取失败时，生成随机噪声
@@ -110,6 +110,7 @@ class AudioDataset(torch.utils.data.Dataset):
             "speech_lengths": speech_lengths,
             "text": text,
             "text_lengths": text_lengths,
+            "sources": [source],
         }
 
     def collator(self, samples: list = None):

@@ -4,7 +4,7 @@
 workspace=`pwd`
 
 # which gpu to train or finetune
-export CUDA_VISIBLE_DEVICES="4,5,6,7"
+export CUDA_VISIBLE_DEVICES="0,1,2,3"
 gpu_num=$(echo $CUDA_VISIBLE_DEVICES | awk -F "," '{print NF}')
 
 # model_name from model_hub, or model_dir in local path
@@ -32,7 +32,7 @@ train_data=/data/megastore/Datasets/ASR/jsonl/SenseVoice/finetune.list
 val_data=/data/megastore/Datasets/ASR/jsonl/SenseVoice/test.list
 
 # exp output dir
-output_dir="./exp_ft_se_real_data"
+output_dir="./exp_svsori_ft1"
 log_file="${output_dir}/log.txt"
 
 deepspeed_config=${workspace}/../../deepspeed_conf/ds_stage1.json
@@ -45,32 +45,21 @@ DISTRIBUTED_ARGS="
     --nproc_per_node $gpu_num \
     --node_rank ${RANK:-0} \
     --master_addr ${MASTER_ADDR:-127.0.0.1} \
-    --master_port ${MASTER_PORT:-36668}
+    --master_port ${MASTER_PORT:-26669}
 "
 
 echo $DISTRIBUTED_ARGS
 
-# whether to enable denoise (runs on GPU in main training process, not in DataLoader)
-enable_denoise=true
-denoise_prob=0.5
-
-# funasr trainer path
+# funasr trainer path  
 # batch_size=32000 for A100 80G, batch_size=16000 for 3090 24G
+
 
             # ++dataset_conf.preprocessor_speech=SpeechPreprocessAddNoiseReverb  \
             # ++dataset_conf.preprocessor_speech_conf.reverb_path=/data/megastore/Datasets/AudioData/Noise/RIRS_NOISES/rir.scp \
             # ++dataset_conf.preprocessor_speech_conf.noise_path=/data/megastore/Datasets/AudioData/Noise/WavNoise/noise.scp \
 
+
 train_tool=../../../funasr/bin/train_ds.py
-
-# denoise args (goes to train_conf.denoise_conf, not dataset_conf)
-if [ "$enable_denoise" = true ]; then
-    denoise_args="++train_conf.denoise_conf.enabled=true \
-                  ++train_conf.denoise_conf.denoise_prob=${denoise_prob}"
-else
-    denoise_args=""
-fi
-
 run_command() {
     torchrun $DISTRIBUTED_ARGS \
         ${train_tool} \
@@ -78,20 +67,20 @@ run_command() {
             ++train_data_set_list="${train_data}" \
             ++valid_data_set_list="${val_data}" \
             ++dataset_conf.batch_sampler="BatchSampler" \
-            ++dataset_conf.batch_size=16000  \
+            ++dataset_conf.batch_size=40000  \
             ++dataset_conf.sort_size=1024 \
             ++dataset_conf.batch_type="token" \
             ++dataset_conf.num_workers=4 \
-            ++dataset_conf.max_source_length=3100 \
+            ++dataset_conf.max_source_length=4000 \
             ++dataset_conf.min_source_length=20 \
             ++dataset_conf.max_target_length=100 \
             ++dataset_conf.min_target_length=1 \
             ++dataset_conf.max_token_length=4100 \
             ++dataset_conf.data_split_num=1 \
-            ++train_conf.max_epoch=20 \
+            ++train_conf.max_epoch=60 \
             ++train_conf.log_interval=100 \
             ++train_conf.resume=true \
-            ++train_conf.validate_interval=5000 \
+            ++train_conf.validate_interval=2500 \
             ++train_conf.save_checkpoint_interval=5000 \
             ++train_conf.keep_nbest_models=100 \
             ++train_conf.avg_keep_nbest_models_type="loss" \
@@ -99,7 +88,6 @@ run_command() {
             ++train_conf.use_deepspeed=false \
             ++train_conf.deepspeed_config=${deepspeed_config} \
             ++optim_conf.lr=0.0002 \
-            ${denoise_args} \
             ++output_dir="${output_dir}" #  2>&1 | tee -a ${log_file}
 }
 

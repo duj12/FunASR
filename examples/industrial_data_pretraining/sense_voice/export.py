@@ -6,10 +6,10 @@
 from funasr import AutoModel
 
 
-model_dir = "iic/SenseVoiceSmall"
+model_dir = "/data/megastore/Projects/DuJing/code/FunASR-main/examples/industrial_data_pretraining/sense_voice/SenseVoiceSmall"
 model = AutoModel(
     model=model_dir,
     device="cuda:0",
 )
 
-res = model.export(type="onnx", quantize=False)
+res = model.export(type="onnx", quantize=True)

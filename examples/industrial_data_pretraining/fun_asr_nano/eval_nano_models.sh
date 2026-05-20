@@ -30,11 +30,20 @@ VLLM_MODEL_OUTPUT="${ASR_SERVER_DIR}/checkpoints/yuekai/Fun-ASR-Nano-2512-vllm"
 # FunASR 仓库内脚本（本地 D: 盘对应替换前缀即可）
 FUNASR_NANO_DIR="/data/megastore/Projects/DuJing/code/FunASR-main/examples/industrial_data_pretraining/fun_asr_nano"
 # 训练产出目录：内含 model.pt、model.pt.ep* 等
-ASR_MODEL_DIR="${FUNASR_NANO_DIR}/exp_nano_ft_lora"
+ASR_MODEL_DIR="${FUNASR_NANO_DIR}/exp_ft_se_real_data_llm"
+ASR_MODEL_DIR="/data/megastore/Projects/DuJing/code/Fun-ASR/best_models"
 
 # LoRA 参数（与 finetune.sh 中一致，留空则不启用 LoRA 合并）
 LORA_RANK=8
 LORA_ALPHA=16
+
+# 跳过参数合并，直接拷贝原始 ckpt 到目标路径（适用于 ckpt 已是完整模型权重的情况）
+# 设为 true 时跳过 merge_ckpt_with_base.py，直接用 cp 拷贝 model.pt
+SKIP_MERGE=false
+
+# 导出 vLLM 权重时是否保存为 bf16 格式
+# 设为 true 时将 LLM 权重转换为 bfloat16 格式保存，减少显存占用和加载时间
+EXPORT_BF16=true
 
 MERGE_SCRIPT="${FUNASR_NANO_DIR}/merge_ckpt_with_base.py"
 EXPORT_SCRIPT="${FUNASR_NANO_DIR}/export_nano_llm_for_vllm.py"
@@ -46,7 +55,7 @@ CLIENT_HOST="0.0.0.0"
 
 # 评测数据与 WER
 TEST_SCP="/data/megastore/Datasets/ASR/Test/WaLi_real/wav.scp"
-TEST_OUTPUT_DIR="/data/megastore/Datasets/ASR/Test/WaLi_real/xmov_llmasr_ft/asr"
+TEST_OUTPUT_DIR="/data/megastore/Datasets/ASR/Test/WaLi_real/xmov_llmasr_ft_wali2/asr"
 WER_DATA_ROOT="/data/megastore/Datasets/ASR/Test/WaLi_real"
 
 # 结果记录
@@ -226,40 +235,57 @@ for MODEL_PT in "${MODEL_PTS[@]}"; do
         continue
     fi
 
-    # ---- 1) 合并 ckpt -> ASR_MODEL_OUTPUT/model.pt ----
-    log "[1/5] merge_ckpt_with_base: ${MODEL_NAME} -> ${ASR_MODEL_OUTPUT}/model.pt"
-    set +e
-    # 构建 merge 命令（如果设置了 LoRA 参数则追加 --lora_rank / --lora_alpha）
-    MERGE_CMD="python \"$MERGE_SCRIPT\" \
-        --base_model_dir \"$MERGE_BASE_DIR\" \
-        --finetuned_ckpt \"$MODEL_PT\" \
-        --output_ckpt \"${ASR_MODEL_OUTPUT}/model.pt\""
-    if [ -n "$LORA_RANK" ] && [ -n "$LORA_ALPHA" ]; then
-        MERGE_CMD="$MERGE_CMD --lora_rank ${LORA_RANK} --lora_alpha ${LORA_ALPHA}"
+    # ---- 1) 获取 ckpt -> ASR_MODEL_OUTPUT/model.pt ----
+    if [ "$SKIP_MERGE" = "true" ]; then
+        log "[1/5] 跳过合并，直接拷贝: ${MODEL_NAME} -> ${ASR_MODEL_OUTPUT}/model.pt"
+        set +e
+        cp -f "$MODEL_PT" "${ASR_MODEL_OUTPUT}/model.pt"
+        COPY_EC=$?
+        set -e
+        if [ "$COPY_EC" -ne 0 ]; then
+            log "ERROR: 拷贝失败 (exit $COPY_EC): ${MODEL_NAME}"
+            echo "${MODEL_NAME}  COPY_FAILED" >> "$RESULT_FILE"
+            continue
+        fi
+        log "拷贝完成: ${ASR_MODEL_OUTPUT}/model.pt"
+    else
+        log "[1/5] merge_ckpt_with_base: ${MODEL_NAME} -> ${ASR_MODEL_OUTPUT}/model.pt"
+        set +e
+        # 构建 merge 命令（如果设置了 LoRA 参数则追加 --lora_rank / --lora_alpha）
+        MERGE_CMD="python \"$MERGE_SCRIPT\" \
+            --base_model_dir \"$MERGE_BASE_DIR\" \
+            --finetuned_ckpt \"$MODEL_PT\" \
+            --output_ckpt \"${ASR_MODEL_OUTPUT}/model.pt\""
+        if [ -n "$LORA_RANK" ] && [ -n "$LORA_ALPHA" ]; then
+            MERGE_CMD="$MERGE_CMD --lora_rank ${LORA_RANK} --lora_alpha ${LORA_ALPHA}"
+        fi
+        log "merge 命令: $MERGE_CMD"
+        MERGE_LOG="/tmp/merge_ckpt_${MODEL_NAME}.log"
+        MERGED=$(eval $MERGE_CMD 2>"$MERGE_LOG")
+        MERGE_EC=$?
+        # 输出 merge 诊断日志（LoRA 合并信息等）
+        if [ -f "$MERGE_LOG" ] && [ -s "$MERGE_LOG" ]; then
+            log "merge 日志:"
+            while IFS= read -r line; do log "  $line"; done < "$MERGE_LOG"
+        fi
+        set -e
+        if [ "$MERGE_EC" -ne 0 ] || [ -z "$MERGED" ]; then
+            log "ERROR: merge 失败 (exit $MERGE_EC): ${MODEL_NAME}"
+            echo "${MODEL_NAME}  MERGE_FAILED" >> "$RESULT_FILE"
+            continue
+        fi
+        log "合并完成: $MERGED"
     fi
-    log "merge 命令: $MERGE_CMD"
-    MERGE_LOG="/tmp/merge_ckpt_${MODEL_NAME}.log"
-    MERGED=$(eval $MERGE_CMD 2>"$MERGE_LOG")
-    MERGE_EC=$?
-    # 输出 merge 诊断日志（LoRA 合并信息等）
-    if [ -f "$MERGE_LOG" ] && [ -s "$MERGE_LOG" ]; then
-        log "merge 日志:"
-        while IFS= read -r line; do log "  $line"; done < "$MERGE_LOG"
-    fi
-    set -e
-    if [ "$MERGE_EC" -ne 0 ] || [ -z "$MERGED" ]; then
-        log "ERROR: merge 失败 (exit $MERGE_EC): ${MODEL_NAME}"
-        echo "${MODEL_NAME}  MERGE_FAILED" >> "$RESULT_FILE"
-        continue
-    fi
-    log "合并完成: $MERGED"
 
     # ---- 2) 导出 tokenizer + llm 供 vLLM ----
     log "[2/5] export_nano_llm_for_vllm -> ${VLLM_MODEL_OUTPUT}"
     set +e
-    VLLM_OUT=$(python "$EXPORT_SCRIPT" \
-        --asr_model_dir "$ASR_MODEL_OUTPUT" \
-        --output_dir "$VLLM_MODEL_OUTPUT" 2>/dev/null)
+    EXPORT_ARGS="--asr_model_dir \"$ASR_MODEL_OUTPUT\" --output_dir \"$VLLM_MODEL_OUTPUT\""
+    if [ "$EXPORT_BF16" = "true" ]; then
+        EXPORT_ARGS="$EXPORT_ARGS --bf16"
+        log "启用 bf16 格式导出"
+    fi
+    VLLM_OUT=$(eval python "$EXPORT_SCRIPT" $EXPORT_ARGS 2>/dev/null)
     EXPORT_EC=$?
     set -e
     if [ "$EXPORT_EC" -ne 0 ] || [ -z "$VLLM_OUT" ]; then
@@ -302,10 +328,11 @@ for MODEL_PT in "${MODEL_PTS[@]}"; do
         --port "$SERVER_PORT" \
         --host "$CLIENT_HOST" \
         --audio_in "$TEST_SCP" \
-        --thread_num 8 \
+        --thread_num 4 \
         --mode offline \
         --itn 0 \
         --output_dir "$TEST_OUTPUT_DIR" \
+        --svs_lang zh    \
         --vad_energy -100 \
         --vad_tail_sil 800 \
         --vad_max_len 60000; then

@@ -151,6 +151,7 @@ class SenseVoiceDataset(torch.utils.data.Dataset):
                 "text_lengths": text_lengths,
                 "target_mask": target_mask,
                 "target_mask_lengths": target_mask_lengths,
+                "sources": [source],
             }
             break
 
@@ -362,6 +363,7 @@ class SenseVoiceCTCDataset(torch.utils.data.Dataset):
                 "speech_lengths": speech_lengths,
                 "text": text,
                 "text_lengths": text_lengths,
+                "sources": [source],
             }
             break
 

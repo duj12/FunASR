@@ -18,7 +18,7 @@ train_data=/data/megastore/Datasets/ASR/jsonl/FunASR_Nano/finetune.list
 val_data=/data/megastore/Datasets/ASR/jsonl/FunASR_Nano/test.list
 
 # exp output dir
-output_dir="./exp_ft_se"
+output_dir="./exp_ft_se_real_data_llm"
 log_file="${output_dir}/log.txt"
 
 deepspeed_config=${workspace}/deepspeed_conf/ds_stage1.json
@@ -39,27 +39,19 @@ echo $DISTRIBUTED_ARGS
             # ++dataset_conf.preprocessor_speech_conf.reverb_path=/data/megastore/Datasets/AudioData/Noise/RIRS_NOISES/rir.scp \
             # ++dataset_conf.preprocessor_speech_conf.noise_path=/data/megastore/Datasets/AudioData/Noise/WavNoise/noise.scp \
 
-# whether to enable denoise preprocessing (true/false)
+# whether to enable denoise (runs on GPU in main training process, not in DataLoader)
 enable_denoise=true
 denoise_prob=0.5
-# GPU for denoise: auto=one per training GPU via LOCAL_RANK, or set specific id (e.g. 0)
-denoise_gpu=auto
 
 # funasr trainer path
 train_tool=`which funasr-train-ds`
 train_tool=../../../funasr/bin/train_ds.py
 echo "Using funasr trainer: ${train_tool}"
 
-# denoise args
+# denoise args (goes to train_conf.denoise_conf, not dataset_conf)
 if [ "$enable_denoise" = true ]; then
-    if [ "$denoise_gpu" = "auto" ]; then
-        denoise_args="++dataset_conf.preprocessor_speech=SpeechPreprocessDenoise \
-                      ++dataset_conf.preprocessor_speech_conf.denoise_prob=${denoise_prob}"
-    else
-        denoise_args="++dataset_conf.preprocessor_speech=SpeechPreprocessDenoise \
-                      ++dataset_conf.preprocessor_speech_conf.denoise_prob=${denoise_prob} \
-                      ++dataset_conf.preprocessor_speech_conf.denoise_gpu=${denoise_gpu}"
-    fi
+    denoise_args="++train_conf.denoise_conf.enabled=true \
+                  ++train_conf.denoise_conf.denoise_prob=${denoise_prob}"
 else
     denoise_args=""
 fi
@@ -76,30 +68,31 @@ run_command() {
             ++dataset_conf.batch_size=20000  \
             ++dataset_conf.sort_size=1024 \
             ++dataset_conf.batch_type="token" \
-            ++dataset_conf.num_workers=1 \
+            ++dataset_conf.num_workers=4 \
             ++dataset_conf.max_source_length=4000 \
             ++dataset_conf.min_source_length=20 \
             ++dataset_conf.max_target_length=100 \
             ++dataset_conf.min_target_length=1 \
             ++dataset_conf.max_token_length=4100 \
             ++dataset_conf.data_split_num=1 \
-            ++train_conf.max_epoch=60 \
+            ++train_conf.max_epoch=10 \
             ++train_conf.log_interval=100 \
             ++train_conf.resume=true \
             ++train_conf.validate_interval=5000 \
             ++train_conf.save_checkpoint_interval=5000 \
             ++train_conf.keep_nbest_models=100 \
             ++train_conf.avg_keep_nbest_models_type="loss" \
-            ++train_conf.avg_nbest_model=10 \
+            ++train_conf.avg_nbest_model=5 \
             ++train_conf.use_deepspeed=false \
             ++train_conf.deepspeed_config=${deepspeed_config} \
             ++train_conf.find_unused_parameters=true \
-            ++audio_encoder_conf.freeze=false \
-            ++audio_adaptor_conf.freeze=false \
-            ++llm_conf.freeze=true \
+            ++audio_encoder_conf.freeze=true \
+            ++audio_adaptor_conf.freeze=true \
+            ++llm_conf.freeze=false \
+            ++train_conf.effective_save_name_excludes="None" \
             ++optim_conf.lr=0.0002 \
             ${denoise_args} \
-            ++output_dir="${output_dir}" #  2>&1 | tee -a ${log_file}
+            ++output_dir="${output_dir}"  2>&1 | tee -a ${log_file}
 }
 
 # 循环运行
