@@ -4,7 +4,7 @@
 workspace=`pwd`
 
 # which gpu to train or finetune
-export CUDA_VISIBLE_DEVICES="0,1,2,3"
+export CUDA_VISIBLE_DEVICES="4,5,6,7"
 gpu_num=$(echo $CUDA_VISIBLE_DEVICES | awk -F "," '{print NF}')
 
 # model_name from model_hub, or model_dir in local path
@@ -18,7 +18,7 @@ train_data=/data/megastore/Datasets/ASR/jsonl/FunASR_Nano/finetune.list
 val_data=/data/megastore/Datasets/ASR/jsonl/FunASR_Nano/test.list
 
 # exp output dir
-output_dir="./exp_ft_se_real_data_llm"
+output_dir="./exp_ft_se_wali3+wild"
 log_file="${output_dir}/log.txt"
 
 deepspeed_config=${workspace}/deepspeed_conf/ds_stage1.json
@@ -40,8 +40,8 @@ echo $DISTRIBUTED_ARGS
             # ++dataset_conf.preprocessor_speech_conf.noise_path=/data/megastore/Datasets/AudioData/Noise/WavNoise/noise.scp \
 
 # whether to enable denoise (runs on GPU in main training process, not in DataLoader)
-enable_denoise=true
-denoise_prob=0.5
+enable_denoise=false
+denoise_prob=0.1
 
 # funasr trainer path
 train_tool=`which funasr-train-ds`
@@ -65,7 +65,7 @@ run_command() {
             ++train_data_set_list="${train_data}" \
             ++valid_data_set_list="${val_data}" \
             ++dataset_conf.batch_sampler="BatchSampler" \
-            ++dataset_conf.batch_size=20000  \
+            ++dataset_conf.batch_size=40000  \
             ++dataset_conf.sort_size=1024 \
             ++dataset_conf.batch_type="token" \
             ++dataset_conf.num_workers=4 \
@@ -75,12 +75,12 @@ run_command() {
             ++dataset_conf.min_target_length=1 \
             ++dataset_conf.max_token_length=4100 \
             ++dataset_conf.data_split_num=1 \
-            ++train_conf.max_epoch=10 \
+            ++train_conf.max_epoch=5 \
             ++train_conf.log_interval=100 \
             ++train_conf.resume=true \
             ++train_conf.validate_interval=5000 \
             ++train_conf.save_checkpoint_interval=5000 \
-            ++train_conf.keep_nbest_models=100 \
+            ++train_conf.keep_nbest_models=20 \
             ++train_conf.avg_keep_nbest_models_type="loss" \
             ++train_conf.avg_nbest_model=5 \
             ++train_conf.use_deepspeed=false \
@@ -91,6 +91,7 @@ run_command() {
             ++llm_conf.freeze=false \
             ++train_conf.effective_save_name_excludes="None" \
             ++optim_conf.lr=0.0002 \
+            ++disable_update=true \
             ${denoise_args} \
             ++output_dir="${output_dir}"  2>&1 | tee -a ${log_file}
 }

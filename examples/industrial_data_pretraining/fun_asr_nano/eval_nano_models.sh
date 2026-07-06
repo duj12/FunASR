@@ -30,8 +30,8 @@ VLLM_MODEL_OUTPUT="${ASR_SERVER_DIR}/checkpoints/yuekai/Fun-ASR-Nano-2512-vllm"
 # FunASR 仓库内脚本（本地 D: 盘对应替换前缀即可）
 FUNASR_NANO_DIR="/data/megastore/Projects/DuJing/code/FunASR-main/examples/industrial_data_pretraining/fun_asr_nano"
 # 训练产出目录：内含 model.pt、model.pt.ep* 等
-ASR_MODEL_DIR="${FUNASR_NANO_DIR}/exp_ft_se_real_data_llm"
-ASR_MODEL_DIR="/data/megastore/Projects/DuJing/code/Fun-ASR/best_models"
+ASR_MODEL_DIR="${FUNASR_NANO_DIR}/exp_ft_se_wali3+wild"
+#ASR_MODEL_DIR="/data/megastore/Projects/DuJing/code/Fun-ASR/exp_ft_se_wali3+wild"
 
 # LoRA 参数（与 finetune.sh 中一致，留空则不启用 LoRA 合并）
 LORA_RANK=8
@@ -43,7 +43,7 @@ SKIP_MERGE=false
 
 # 导出 vLLM 权重时是否保存为 bf16 格式
 # 设为 true 时将 LLM 权重转换为 bfloat16 格式保存，减少显存占用和加载时间
-EXPORT_BF16=true
+EXPORT_BF16=false
 
 MERGE_SCRIPT="${FUNASR_NANO_DIR}/merge_ckpt_with_base.py"
 EXPORT_SCRIPT="${FUNASR_NANO_DIR}/export_nano_llm_for_vllm.py"
@@ -55,7 +55,7 @@ CLIENT_HOST="0.0.0.0"
 
 # 评测数据与 WER
 TEST_SCP="/data/megastore/Datasets/ASR/Test/WaLi_real/wav.scp"
-TEST_OUTPUT_DIR="/data/megastore/Datasets/ASR/Test/WaLi_real/xmov_llmasr_ft_wali2/asr"
+TEST_OUTPUT_DIR="/data/megastore/Datasets/ASR/Test/WaLi_real/xmov_llmasr_wali2ft_alldata_upreal_llm/asr"
 WER_DATA_ROOT="/data/megastore/Datasets/ASR/Test/WaLi_real"
 
 # 结果记录

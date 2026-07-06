@@ -24,9 +24,9 @@ TEST_SCP="/data/megastore/Datasets/ASR/Test/Test_xmov/xmov_asr/10db_wav.scp"
 TEST_OUT="/data/megastore/Datasets/ASR/Test/Test_xmov/xmov_asr/10db"
 WER_DIR="/data/megastore/Datasets/ASR/Test/Test_xmov/xmov_asr"
 
-MODEL_DIR="${SENSE_VOICE_DIR}/exp_ft_se_real_data"
+MODEL_DIR="${SENSE_VOICE_DIR}/exp_ft_se_wali3+wild"
 TEST_SCP="/data/megastore/Datasets/ASR/Test/WaLi_real/wav.scp"
-TEST_OUT="/data/megastore/Datasets/ASR/Test/WaLi_real/svsori_wali2ft_realdata_se/asr"
+TEST_OUT="/data/megastore/Datasets/ASR/Test/WaLi_real/svsori_wali3+wilddata_se/asr"
 WER_DIR="/data/megastore/Datasets/ASR/Test/WaLi_real"
 
 RESULT_FILE="${MODEL_DIR}/eval_results.txt"

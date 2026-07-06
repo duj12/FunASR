@@ -236,6 +236,8 @@ class Trainer:
             self.denoise_module = DenoiseModule(
                 denoise_prob=denoise_conf.get("denoise_prob", 0.5),
                 ans_model=denoise_conf.get("ans_model", "iic/speech_zipenhancer_ans_multiloss_16k_base"),
+                model_backend=denoise_conf.get("model_backend", "modelscope"),
+                output_key=denoise_conf.get("output_key", "wav_l2"),
             )
         self.use_wandb = kwargs.get("use_wandb", False)
         if self.use_wandb:
